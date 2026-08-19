@@ -1,0 +1,17 @@
+{
+  "case": "multi_repost_same_origin",
+  "original_source_id": "original-release",
+  "reposts": [
+    {"id": "repost-01", "parent_source_id": "original-release"},
+    {"id": "repost-02", "parent_source_id": "original-release"},
+    {"id": "repost-03", "parent_source_id": "original-release"},
+    {"id": "repost-04", "parent_source_id": "original-release"},
+    {"id": "repost-05", "parent_source_id": "original-release"},
+    {"id": "repost-06", "parent_source_id": "original-release"},
+    {"id": "repost-07", "parent_source_id": "original-release"},
+    {"id": "repost-08", "parent_source_id": "original-release"},
+    {"id": "repost-09", "parent_source_id": "original-release"},
+    {"id": "repost-10", "parent_source_id": "original-release"}
+  ],
+  "expected_independence_count": 1
+}

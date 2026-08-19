@@ -1,0 +1,13 @@
+{
+  "case": "direct_conflict",
+  "claims": [
+    {"id": "claim-a", "statement": "The release happened in 2025.", "source_id": "source-a"},
+    {"id": "claim-b", "statement": "The release happened in 2026.", "source_id": "source-b"}
+  ],
+  "contradiction": {
+    "claim_a_id": "claim-a",
+    "claim_b_id": "claim-b",
+    "type": "direct",
+    "status": "open"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "case": "independent_support",
+  "claim": "The library uses immutable source snapshots.",
+  "sources": [
+    {"id": "source-a", "canonical_uri": "https://a.example.test/report", "independence_group": "a"},
+    {"id": "source-b", "canonical_uri": "https://b.example.test/paper", "independence_group": "b"}
+  ],
+  "evidence": [
+    {"source_id": "source-a", "text": "Snapshots are immutable."},
+    {"source_id": "source-b", "text": "A new snapshot is created when content changes."}
+  ]
+}

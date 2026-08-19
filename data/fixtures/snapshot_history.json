@@ -1,0 +1,9 @@
+{
+  "case": "snapshot_history",
+  "source_id": "source-history",
+  "snapshots": [
+    {"id": "snapshot-old", "retrieved_at": "2026-01-01T00:00:00Z", "content": "version one"},
+    {"id": "snapshot-new", "retrieved_at": "2026-02-01T00:00:00Z", "content": "version two"}
+  ],
+  "expected_rule": "old snapshot remains readable after new snapshot is saved"
+}

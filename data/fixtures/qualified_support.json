@@ -1,0 +1,9 @@
+{
+  "case": "qualified_support",
+  "claim": "The cache is safe for repeated reads.",
+  "evidence": {
+    "text": "The cache is safe for repeated reads when the snapshot hash is verified.",
+    "link_type": "qualifies",
+    "qualifiers": {"condition": "snapshot hash is verified"}
+  }
+}
