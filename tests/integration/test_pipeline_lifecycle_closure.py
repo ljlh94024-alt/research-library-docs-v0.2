@@ -112,6 +112,15 @@ def test_pipeline_success_requires_all_children_succeeded(repository) -> None:
         repository.save_pipeline_run(
             replace(active_run, status=PipelineRunStatus.SUCCEEDED, finished_at=FINISHED)
         )
+    with pytest.raises(InvalidStateTransitionError):
+        repository.save_pipeline_run(
+            replace(
+                active_run,
+                status=PipelineRunStatus.FAILED,
+                finished_at=FINISHED,
+                error="pipeline failure",
+            )
+        )
     assert repository.get_stage_run(active_stage.id).status is StageRunStatus.STARTED
 
     failed_run = repository.save_pipeline_run(
