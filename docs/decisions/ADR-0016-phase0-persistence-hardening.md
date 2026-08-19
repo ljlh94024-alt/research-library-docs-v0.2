@@ -11,8 +11,10 @@ Phase 0 的第一版基础已经发布到 `0001_phase0`。后续修复必须能�
 
 ## Decision
 
-1. 历史 migration 永不重写。每个 schema 变化建立新的有序 Alembic revision；
-   本版本新增 `0002_phase0_hardening`，并保留 `0001_phase0` 的原始 DDL。
+1. 在本 PR 内，`0001_phase0` 根据基线 `01e0ce8` 实际运行时创建的 schema
+   做一次性显式冻结，包含六个历史的、无 FK 的 processing provenance 列。
+   本 PR 新增 `0002_phase0_hardening` 承载 FK、约束和新增列。PR 合并后，
+   `0001_phase0` 永不再修改；之后每个 schema 变化都建立新的有序 revision。
 2. 文档同样按版本新增。历史 ADR、冻结文件和验收文件保持原样；新的边界或
    修订写入新的 ADR/版本说明，并在 `DOCUMENTS.md` 建立索引。
 3. SourceSnapshot、Evidence、Claim、ClaimGroup、EvidenceLink、ResolvedClaim

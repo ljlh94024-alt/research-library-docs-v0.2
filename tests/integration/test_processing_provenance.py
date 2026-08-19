@@ -13,10 +13,10 @@ from research_library.domain import (
     Source,
     StageRun,
 )
-from research_library.storage import StorageIntegrityError
+from research_library.storage import ProcessingGap, StorageIntegrityError
 
 
-def _build_processed_atom(repository):
+def _build_processed_atom(repository, *, snapshot_stage="processing-stage"):
     pipeline = repository.save_pipeline_run(PipelineRun(id="processing-pipeline"))
     stage = repository.save_stage_run(
         StageRun(id="processing-stage", pipeline_run_id=pipeline.id, stage_name="fixture")
@@ -26,7 +26,7 @@ def _build_processed_atom(repository):
         source.id,
         b"processed content",
         snapshot_id="processing-snapshot",
-        created_by_stage_run_id=stage.id,
+        created_by_stage_run_id=snapshot_stage,
     )
     evidence = repository.save_evidence(
         Evidence(
@@ -115,3 +115,17 @@ def test_processing_provenance_fails_loudly_on_broken_stage_lineage(repository) 
         assert "missing stage run" in str(exc)
     else:
         raise AssertionError("broken processing lineage was not rejected")
+
+
+def test_processing_provenance_allows_valid_unattributed_imports(repository) -> None:
+    atom, _, stage, _ = _build_processed_atom(repository, snapshot_stage=None)
+    provenance = repository.get_processing_provenance(atom.id)
+    assert not provenance.is_complete
+    assert provenance.gaps == (
+        ProcessingGap(
+            entity_type="source_snapshot",
+            entity_id="processing-snapshot",
+            reason="not_recorded",
+        ),
+    )
+    assert all(step.stage_run.id == stage.id for step in provenance.steps)

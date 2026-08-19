@@ -65,6 +65,7 @@ def upgrade() -> None:
         sa.Column("content_ref", sa.Text, nullable=False),
         sa.Column("mime_type", sa.String(128)),
         sa.Column("metadata", sa.JSON, nullable=False),
+        sa.Column("created_by_stage_run_id", sa.String(128)),
         sa.ForeignKeyConstraint(["source_id"], ["sources.id"]),
         sa.UniqueConstraint("content_ref"),
     )
@@ -78,6 +79,7 @@ def upgrade() -> None:
         sa.Column("extraction_method", sa.String(128)),
         sa.Column("metadata", sa.JSON, nullable=False),
         sa.Column("created_at", sa.String(64), nullable=False),
+        sa.Column("created_by_stage_run_id", sa.String(128)),
         sa.ForeignKeyConstraint(["snapshot_id"], ["source_snapshots.id"]),
     )
     op.create_table(
@@ -91,6 +93,7 @@ def upgrade() -> None:
         sa.Column("temporal_scope", sa.Text),
         sa.Column("extraction_confidence", sa.String(32)),
         sa.Column("created_at", sa.String(64), nullable=False),
+        sa.Column("created_by_stage_run_id", sa.String(128)),
     )
     op.create_table(
         "claim_groups",
@@ -115,6 +118,7 @@ def upgrade() -> None:
         sa.Column("relation_type", sa.String(32), nullable=False),
         sa.Column("rationale", sa.Text),
         sa.Column("created_at", sa.String(64), nullable=False),
+        sa.Column("created_by_stage_run_id", sa.String(128)),
         sa.ForeignKeyConstraint(["evidence_id"], ["evidence.id"]),
         sa.ForeignKeyConstraint(["claim_id"], ["claims.id"]),
     )
@@ -142,6 +146,7 @@ def upgrade() -> None:
         sa.Column("resolution_reason", sa.Text),
         sa.Column("validity", sa.Text),
         sa.Column("created_at", sa.String(64), nullable=False),
+        sa.Column("created_by_stage_run_id", sa.String(128)),
         sa.ForeignKeyConstraint(["claim_group_id"], ["claim_groups.id"]),
     )
     op.create_table(
@@ -152,6 +157,7 @@ def upgrade() -> None:
         sa.Column("confidence", sa.String(32)),
         sa.Column("qualifiers", sa.JSON, nullable=False),
         sa.Column("created_at", sa.String(64), nullable=False),
+        sa.Column("created_by_stage_run_id", sa.String(128)),
         sa.ForeignKeyConstraint(["resolved_claim_id"], ["resolved_claims.id"]),
     )
     op.create_table(

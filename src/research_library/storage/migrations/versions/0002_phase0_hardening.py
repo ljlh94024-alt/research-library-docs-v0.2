@@ -59,7 +59,6 @@ def upgrade() -> None:
     _drop_indexes(_OLD_INDEXES)
 
     with op.batch_alter_table("source_snapshots", recreate="always") as batch:
-        batch.add_column(sa.Column("created_by_stage_run_id", sa.String(128)))
         batch.create_foreign_key(
             "fk_source_snapshots_created_by_stage_run_id",
             "stage_runs",
@@ -67,7 +66,6 @@ def upgrade() -> None:
             ["id"],
         )
     with op.batch_alter_table("evidence", recreate="always") as batch:
-        batch.add_column(sa.Column("created_by_stage_run_id", sa.String(128)))
         batch.create_foreign_key(
             "fk_evidence_created_by_stage_run_id",
             "stage_runs",
@@ -80,7 +78,6 @@ def upgrade() -> None:
             existing_type=sa.String(32),
             type_=sa.Float(),
         )
-        batch.add_column(sa.Column("created_by_stage_run_id", sa.String(128)))
         batch.create_foreign_key(
             "fk_claims_created_by_stage_run_id",
             "stage_runs",
@@ -101,7 +98,6 @@ def upgrade() -> None:
             ["id"],
         )
     with op.batch_alter_table("evidence_links", recreate="always") as batch:
-        batch.add_column(sa.Column("created_by_stage_run_id", sa.String(128)))
         batch.create_foreign_key(
             "fk_evidence_links_created_by_stage_run_id",
             "stage_runs",
@@ -118,7 +114,6 @@ def upgrade() -> None:
         )
     with op.batch_alter_table("resolved_claims", recreate="always") as batch:
         batch.alter_column("confidence", existing_type=sa.String(32), type_=sa.Float())
-        batch.add_column(sa.Column("created_by_stage_run_id", sa.String(128)))
         batch.create_foreign_key(
             "fk_resolved_claims_created_by_stage_run_id",
             "stage_runs",
@@ -131,7 +126,6 @@ def upgrade() -> None:
         )
     with op.batch_alter_table("knowledge_atoms", recreate="always") as batch:
         batch.alter_column("confidence", existing_type=sa.String(32), type_=sa.Float())
-        batch.add_column(sa.Column("created_by_stage_run_id", sa.String(128)))
         batch.create_foreign_key(
             "fk_knowledge_atoms_created_by_stage_run_id",
             "stage_runs",
@@ -182,18 +176,15 @@ def downgrade() -> None:
         batch.drop_constraint("ck_knowledge_atoms_confidence_range", type_="check")
         batch.drop_constraint("fk_knowledge_atoms_created_by_stage_run_id", type_="foreignkey")
         batch.alter_column("confidence", existing_type=sa.Float(), type_=sa.String(32))
-        batch.drop_column("created_by_stage_run_id")
     with op.batch_alter_table("resolved_claims", recreate="always") as batch:
         batch.drop_constraint("ck_resolved_claims_confidence_range", type_="check")
         batch.drop_constraint("fk_resolved_claims_created_by_stage_run_id", type_="foreignkey")
         batch.alter_column("confidence", existing_type=sa.Float(), type_=sa.String(32))
-        batch.drop_column("created_by_stage_run_id")
     with op.batch_alter_table("contradictions", recreate="always") as batch:
         batch.drop_constraint("fk_contradictions_created_by_stage_run_id", type_="foreignkey")
         batch.drop_column("created_by_stage_run_id")
     with op.batch_alter_table("evidence_links", recreate="always") as batch:
         batch.drop_constraint("fk_evidence_links_created_by_stage_run_id", type_="foreignkey")
-        batch.drop_column("created_by_stage_run_id")
     with op.batch_alter_table("claim_groups", recreate="always") as batch:
         batch.drop_constraint("fk_claim_groups_created_by_stage_run_id", type_="foreignkey")
         batch.drop_column("created_by_stage_run_id")
@@ -205,13 +196,10 @@ def downgrade() -> None:
             existing_type=sa.Float(),
             type_=sa.String(32),
         )
-        batch.drop_column("created_by_stage_run_id")
     with op.batch_alter_table("evidence", recreate="always") as batch:
         batch.drop_constraint("fk_evidence_created_by_stage_run_id", type_="foreignkey")
-        batch.drop_column("created_by_stage_run_id")
     with op.batch_alter_table("source_snapshots", recreate="always") as batch:
         batch.drop_constraint("fk_source_snapshots_created_by_stage_run_id", type_="foreignkey")
-        batch.drop_column("created_by_stage_run_id")
 
     for name, table in _OLD_INDEXES:
         column = name.removeprefix("ix_")

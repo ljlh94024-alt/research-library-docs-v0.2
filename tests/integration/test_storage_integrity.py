@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -14,10 +15,13 @@ from research_library.domain import (
     KnowledgeAtom,
     ResolvedClaim,
     Source,
+    SourceSnapshot,
     SourceType,
 )
 from research_library.storage import ImmutableRecordError, StorageIntegrityError
 from research_library.storage.schema import source_dependencies
+
+TIMESTAMP = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def _source(repository) -> Source:
@@ -41,6 +45,18 @@ def test_snapshot_prevalidates_source_without_creating_files(repository, tmp_pat
     assert not snapshot_root.exists() or not any(snapshot_root.rglob("*"))
 
 
+def test_snapshot_prevalidates_stage_without_creating_files(repository) -> None:
+    source = _source(repository)
+    with pytest.raises(StorageIntegrityError, match="stage run does not exist"):
+        repository.create_snapshot(
+            source.id,
+            b"bytes",
+            snapshot_id="snapshot-missing-stage",
+            created_by_stage_run_id="missing-stage",
+        )
+    assert not Path(repository.snapshot_store.root).exists()
+
+
 def test_snapshot_rolls_back_new_file_when_database_save_fails(repository, monkeypatch) -> None:
     source = _source(repository)
 
@@ -51,6 +67,51 @@ def test_snapshot_rolls_back_new_file_when_database_save_fails(repository, monke
     with pytest.raises(StorageIntegrityError, match="forced database failure"):
         repository.create_snapshot(source.id, b"new bytes", snapshot_id="snapshot-cleanup")
     assert not any(Path(repository.snapshot_store.root).rglob("*"))
+
+
+def test_snapshot_existing_file_is_preserved_when_replay_save_fails(
+    repository, monkeypatch
+) -> None:
+    source = _source(repository)
+    snapshot = repository.create_snapshot(
+        source.id,
+        b"existing bytes",
+        snapshot_id="snapshot-existing",
+        metadata={"v": 1},
+    )
+    path = Path(repository.snapshot_store.root) / snapshot.content_ref
+
+    def fail(_snapshot):
+        raise StorageIntegrityError("forced replay database failure")
+
+    monkeypatch.setattr(repository, "save_snapshot", fail)
+    with pytest.raises(StorageIntegrityError, match="forced replay database failure"):
+        repository.create_snapshot(
+            source.id,
+            b"existing bytes",
+            snapshot_id=snapshot.id,
+            retrieved_at=snapshot.retrieved_at,
+            metadata={"v": 1},
+        )
+    assert path.read_bytes() == b"existing bytes"
+
+
+def test_save_snapshot_does_not_read_database_after_commit(repository, monkeypatch) -> None:
+    source = _source(repository)
+    snapshot = SourceSnapshot(
+        id="snapshot-no-post-commit-read",
+        source_id=source.id,
+        content_hash="b" * 64,
+        content_ref="source-lifecycle/snapshot-no-post-commit-read/content",
+        retrieved_at=TIMESTAMP,
+    )
+
+    def fail_after_commit(_snapshot_id):
+        raise AssertionError("post-commit get_snapshot must not be called")
+
+    monkeypatch.setattr(repository, "get_snapshot", fail_after_commit)
+    persisted = repository.save_snapshot(snapshot)
+    assert persisted.id == snapshot.id
 
 
 def test_snapshot_exact_replay_is_idempotent_and_metadata_change_is_rejected(repository) -> None:

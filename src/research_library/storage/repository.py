@@ -59,9 +59,21 @@ class ProcessingStep:
 
 
 @dataclass(frozen=True, slots=True)
+class ProcessingGap:
+    entity_type: str
+    entity_id: str
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
 class ProcessingProvenance:
     atom_id: str
     steps: tuple[ProcessingStep, ...]
+    gaps: tuple[ProcessingGap, ...] = ()
+
+    @property
+    def is_complete(self) -> bool:
+        return not self.gaps
 
 
 class Repository(Protocol):

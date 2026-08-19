@@ -40,6 +40,10 @@
 
 - `docs/versions/phase-0-final-hardening.md` — **Phase 0 持久化完整性加固版本说明。**
 
+## Reviews
+
+- `docs/reviews/phase-0-freeze-review.md` — **PR #1 冻结前二次审计、修复与复核记录。**
+
 ## Roadmap
 
 - `docs/roadmap/mvp-plan.md`
