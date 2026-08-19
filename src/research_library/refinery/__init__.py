@@ -1,5 +1,6 @@
 """Pipeline execution and Phase 1A typed refinery contracts."""
 
+from .backend import FixtureSemanticBackend
 from .contracts import (
     CANONICAL_STAGE_NAMES,
     AtomBuildInput,
@@ -23,6 +24,28 @@ from .contracts import (
     ResolveOutput,
     StageContext,
 )
+from .deterministic import (
+    DETERMINISTIC_PIPELINE_VERSION,
+    AtomPolicy,
+    ConfidencePolicy,
+    ContradictionPolicy,
+    DeterministicRefinery,
+    DeterministicRefineryResult,
+    IndependencePolicy,
+    NormalizationPolicy,
+    ResolutionPolicy,
+)
+from .fixtures import (
+    GOLDEN_FIXTURE_IDS,
+    FixtureClaimSpec,
+    FixtureDefinition,
+    FixtureEvidenceSpec,
+    FixtureSnapshotSpec,
+    FixtureSourceSpec,
+    get_golden_fixture,
+    golden_fixtures,
+)
+from .manifests import StageManifest, canonical_json, stable_artifact_id
 from .pipeline import PipelineRunner
 
 __all__ = [
@@ -48,4 +71,25 @@ __all__ = [
     "ResolveOutput",
     "RefineryStage",
     "StageContext",
+    "AtomPolicy",
+    "ConfidencePolicy",
+    "ContradictionPolicy",
+    "DETERMINISTIC_PIPELINE_VERSION",
+    "DeterministicRefinery",
+    "DeterministicRefineryResult",
+    "FixtureClaimSpec",
+    "FixtureDefinition",
+    "FixtureEvidenceSpec",
+    "FixtureSemanticBackend",
+    "FixtureSnapshotSpec",
+    "FixtureSourceSpec",
+    "GOLDEN_FIXTURE_IDS",
+    "IndependencePolicy",
+    "NormalizationPolicy",
+    "ResolutionPolicy",
+    "StageManifest",
+    "canonical_json",
+    "get_golden_fixture",
+    "golden_fixtures",
+    "stable_artifact_id",
 ]

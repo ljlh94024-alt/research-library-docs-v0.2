@@ -9,12 +9,12 @@ This phase establishes normalized `ClaimGroup`, immutable
 `ResolutionDecision`, explicit decision Claim/Evidence inputs,
 `ConfidenceAssessment`, first-class `SourceDependency`, publication-aware
 `KnowledgeAtom`, migration `0003`, repository invariants, provenance, and nine
-typed stage contracts. It contains no semantic stage implementation.
+typed stage contracts.
 
 ## 1B — Deterministic Fixture Pipeline
 
-The following fixtures are frozen as future expectations; they are not
-implemented in 1A:
+The following five fixtures are implemented as deterministic golden E2E
+expectations:
 
 | Fixture | Expected outcome |
 | --- | --- |
@@ -24,8 +24,11 @@ implemented in 1A:
 | `qualified_support` | `QUALIFIES` remains conditional and never becomes unconditional `SUPPORTS`. |
 | `snapshot_history` | Old snapshots/results remain readable after a later run. |
 
-Phase 1B may implement deterministic policies over the 1A contracts, but it
-must retain append-only history and offline repeatability.
+The implementation uses `FixtureSemanticBackend`, stable artifact IDs,
+content-addressed stage manifests, and explicit versioned
+Normalization/Independence/Contradiction/Resolution/Confidence/Atom policies.
+It retains append-only history and offline repeatability. No migration/schema
+change, real LLM, network/API call, embedding, or vector database is allowed.
 
 ## 1C — Structured LLM Boundary
 
