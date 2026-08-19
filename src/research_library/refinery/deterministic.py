@@ -43,7 +43,7 @@ from research_library.domain import (
 from research_library.storage.repository import Repository
 
 from .manifests import StageManifest, StageManifestStore, stable_artifact_id
-from .semantic import SemanticBackend
+from .semantic import SemanticBackend, SemanticRequest
 
 DETERMINISTIC_PIPELINE_VERSION = "phase1b-deterministic-v2"
 CANONICAL_STAGE_NAMES = (
@@ -345,7 +345,7 @@ class AtomPolicy:
 
 @dataclass(frozen=True, slots=True)
 class DeterministicRefineryResult:
-    fixture_id: str
+    fixture_id: str | None
     pipeline_run: PipelineRun
     stage_runs: tuple[StageRun, ...]
     manifests: tuple[StageManifest, ...]
@@ -431,10 +431,10 @@ class DeterministicRefinery:
             if root is None:
                 snapshot_store = getattr(repository, "snapshot_store", None)
                 root = Path(snapshot_store.root).parent / "refinery-manifests"
-            self.manifest_store = StageManifestStore(root)
+        self.manifest_store = StageManifestStore(root)
         self.pipeline_version = pipeline_version
 
-    def run(
+    def run_fixture(
         self,
         fixture_id: str,
         *,
@@ -443,15 +443,51 @@ class DeterministicRefinery:
         run_key: str | None = None,
         failure_stage: str | None = None,
     ) -> DeterministicRefineryResult:
+        """Fixture convenience wrapper; core ``run`` remains fixture-free."""
+
+        from .backend import FixtureHarness, FixtureSemanticBackend
+
+        if not isinstance(self.backend, FixtureSemanticBackend):
+            raise TypeError("run_fixture requires FixtureSemanticBackend")
+        prepared = FixtureHarness(self.backend).prepare(self.repository, fixture_id, snapshot_keys)
+        result = self.run(
+            prepared.snapshot_ids,
+            reference_time=prepared.reference_time,
+            recovery_key=recovery_key,
+            run_key=run_key,
+            failure_stage=failure_stage,
+        )
+        return replace(result, fixture_id=fixture_id)
+
+    def run(
+        self,
+        snapshot_ids: tuple[str, ...],
+        *,
+        reference_time: datetime | None = None,
+        recovery_key: str | None = None,
+        run_key: str | None = None,
+        failure_stage: str | None = None,
+    ) -> DeterministicRefineryResult:
         if recovery_key is not None and run_key is not None:
             raise ValueError("use recovery_key or run_key, not both")
         recovery_key = recovery_key or run_key
-        snapshots = self.backend.seed_inputs(self.repository, fixture_id, snapshot_keys)
-        snapshot_ids = tuple(item.id for item in snapshots)
-        batch = self.backend.collect(fixture_id, snapshot_ids)
-        now = (batch.reference_time or datetime.now(UTC)).astimezone(UTC)
+        snapshot_ids = tuple(snapshot_ids)
+        if not snapshot_ids or any(not item.strip() for item in snapshot_ids):
+            raise ValueError("snapshot_ids must contain at least one non-empty ID")
+        snapshots = tuple(
+            snapshot
+            for snapshot_id in snapshot_ids
+            if (snapshot := self.repository.get_snapshot(snapshot_id)) is not None
+        )
+        if len(snapshots) != len(snapshot_ids):
+            raise ValueError("all snapshot_ids must already exist in the repository")
+        request = SemanticRequest(snapshot_ids, reference_time)
+        batch = self.backend.collect(request, self.repository)
+        now = (
+            batch.reference_time or reference_time or max(item.retrieved_at for item in snapshots)
+        ).astimezone(UTC)
         pipeline_id = (
-            stable_artifact_id("pipeline-run", fixture_id, self.pipeline_version, recovery_key)
+            stable_artifact_id("pipeline-run", *snapshot_ids, self.pipeline_version, recovery_key)
             if recovery_key is not None
             else f"pipeline-run-{uuid4().hex}"
         )
@@ -461,7 +497,10 @@ class DeterministicRefinery:
             status=PipelineRunStatus.STARTED,
             started_at=now,
             input_ref=f"snapshots:{stable_artifact_id('snapshot-input', *snapshot_ids)}",
-            metadata={"fixture_id": fixture_id, "backend": type(self.backend).__name__},
+            metadata={
+                "snapshot_count": str(len(snapshot_ids)),
+                "backend": type(self.backend).__name__,
+            },
         )
         existing_pipeline = self.repository.get_pipeline_run(pipeline_id)
         pipeline_replay = existing_pipeline is not None
@@ -511,7 +550,6 @@ class DeterministicRefinery:
             stage_id = stable_artifact_id("stage-run", pipeline_id, stage_name)
             common_metadata = {
                 "pipeline_run_id": pipeline_id,
-                "fixture_id": fixture_id,
                 "kind": "input",
                 **(metadata or {}),
             }
@@ -549,7 +587,6 @@ class DeterministicRefinery:
                     actual_output_ids,
                     {
                         "pipeline_run_id": pipeline_id,
-                        "fixture_id": fixture_id,
                         "kind": "output",
                         **(metadata or {}),
                     },
@@ -980,7 +1017,7 @@ class DeterministicRefinery:
             "semantic_signature": signatures,
         }
         return DeterministicRefineryResult(
-            fixture_id=fixture_id,
+            fixture_id=None,
             pipeline_run=pipeline,
             stage_runs=tuple(stage_runs),
             manifests=tuple(output_manifests),

@@ -61,15 +61,22 @@ class SemanticBatch:
     reference_time: datetime | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class SemanticRequest:
+    snapshot_ids: tuple[str, ...]
+    reference_time: datetime | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "snapshot_ids", tuple(self.snapshot_ids))
+        if not self.snapshot_ids or any(not item.strip() for item in self.snapshot_ids):
+            raise ValueError("snapshot_ids must contain at least one non-empty ID")
+
+
 @runtime_checkable
 class SemanticBackend(Protocol):
     """Replaceable semantic seam; implementations return candidates, not rows."""
 
-    def seed_inputs(
-        self, repository: Any, fixture_id: str, snapshot_keys: tuple[str, ...] | None = None
-    ) -> tuple[Any, ...]: ...
-
-    def collect(self, fixture_id: str, snapshot_ids: tuple[str, ...]) -> SemanticBatch: ...
+    def collect(self, request: SemanticRequest, repository: Any) -> SemanticBatch: ...
 
 
 __all__ = [
@@ -79,4 +86,5 @@ __all__ = [
     "EvidenceRelationCandidate",
     "SemanticBackend",
     "SemanticBatch",
+    "SemanticRequest",
 ]

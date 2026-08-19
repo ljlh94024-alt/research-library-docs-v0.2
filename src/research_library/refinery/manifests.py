@@ -136,7 +136,13 @@ class StageManifestStore:
             value = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ManifestIntegrityError(f"manifest is not canonical JSON: {ref}") from exc
-        return StageManifest.from_dict(value)
+        manifest = StageManifest.from_dict(value)
+        if manifest.ref != ref:
+            raise ManifestIntegrityError("manifest does not match requested content address")
+        expected = (canonical_json(manifest.as_dict()) + "\n").encode("utf-8")
+        if raw != expected:
+            raise ManifestIntegrityError("manifest bytes are not canonical JSON")
+        return manifest
 
     def verify(self, ref: str) -> bool:
         self.read(ref)

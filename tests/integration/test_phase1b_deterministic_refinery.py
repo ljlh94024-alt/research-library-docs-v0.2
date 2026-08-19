@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 
 import pytest
 
@@ -12,6 +13,7 @@ from research_library.domain import (
     KnowledgeAtomStatus,
     ResolutionInputRole,
     ResolvedClaimStatus,
+    Source,
     SourceDependency,
     SourceDependencyRelation,
 )
@@ -20,15 +22,20 @@ from research_library.refinery import (
     DETERMINISTIC_PIPELINE_VERSION,
     GOLDEN_FIXTURE_IDS,
     AtomPolicy,
+    ClaimCandidate,
     ConfidencePolicy,
     ContradictionPolicy,
     DeterministicRefinery,
+    EvidenceCandidate,
+    EvidenceRelationCandidate,
     FixtureSemanticBackend,
     IndependencePolicy,
     ManifestIntegrityError,
     NormalizationPolicy,
     ResolutionPolicy,
     SemanticBackend,
+    SemanticBatch,
+    SemanticRequest,
     StageManifest,
     StageManifestStore,
 )
@@ -37,13 +44,13 @@ from research_library.refinery import (
 def test_five_golden_fixtures_have_exact_frozen_results(repository) -> None:
     runner = DeterministicRefinery(repository, FixtureSemanticBackend())
 
-    independent = runner.run("independent_support")
+    independent = runner.run_fixture("independent_support")
     assert independent.decisions[0].status is ResolvedClaimStatus.RESOLVED
     assert independent.assessments[0].evidence_floor_met is True
     assert independent.assessments[0].score >= 0.75
     assert independent.atoms[0].status is KnowledgeAtomStatus.ACTIVE
 
-    repost = runner.run("multi_repost_same_origin")
+    repost = runner.run_fixture("multi_repost_same_origin")
     assert len(repost.dependencies) == 10
     assert repost.metrics["effective_independence_count"] == 1
     assert repost.decisions[0].status is ResolvedClaimStatus.RESOLVED
@@ -51,13 +58,13 @@ def test_five_golden_fixtures_have_exact_frozen_results(repository) -> None:
     assert repost.assessments[0].score <= 0.65
     assert repost.atoms[0].status is KnowledgeAtomStatus.WITHHELD
 
-    conflict = runner.run("direct_conflict")
+    conflict = runner.run_fixture("direct_conflict")
     assert len(conflict.contradictions) == 1
     assert conflict.contradictions[0].type is ContradictionType.DIRECT
     assert conflict.decisions[0].status is ResolvedClaimStatus.CONFLICTING
     assert conflict.atoms[0].status is KnowledgeAtomStatus.WITHHELD
 
-    qualified = runner.run("qualified_support")
+    qualified = runner.run_fixture("qualified_support")
     assert {item.relation_type for item in qualified.evidence_links} == {EvidenceLinkType.QUALIFIES}
     assert qualified.decisions[0].status is ResolvedClaimStatus.INSUFFICIENT_EVIDENCE
     assert qualified.evidence_inputs[0].role is ResolutionInputRole.QUALIFYING
@@ -75,8 +82,8 @@ def test_five_golden_fixtures_have_exact_frozen_results(repository) -> None:
 def test_snapshot_history_is_two_independent_runs(repository) -> None:
     runner = DeterministicRefinery(repository, FixtureSemanticBackend())
 
-    old = runner.run("snapshot_history", snapshot_keys=("snapshot-old",))
-    new = runner.run("snapshot_history", snapshot_keys=("snapshot-new",))
+    old = runner.run_fixture("snapshot_history", snapshot_keys=("snapshot-old",))
+    new = runner.run_fixture("snapshot_history", snapshot_keys=("snapshot-new",))
 
     assert old.pipeline_run.id != new.pipeline_run.id
     assert set(old.artifact_ids).isdisjoint(new.artifact_ids)
@@ -93,7 +100,7 @@ def test_snapshot_history_is_two_independent_runs(repository) -> None:
 
 
 def test_all_nine_stages_have_processing_provenance(repository) -> None:
-    result = DeterministicRefinery(repository).run("independent_support")
+    result = DeterministicRefinery(repository).run_fixture("independent_support")
     provenance = repository.get_processing_provenance(result.atoms[0].id)
 
     assert {item.stage_name for item in result.stage_runs} == set(CANONICAL_STAGE_NAMES)
@@ -223,16 +230,61 @@ def test_atom_policy_requires_resolution_floor_and_threshold() -> None:
 def test_fixture_backend_implements_provider_neutral_protocol() -> None:
     backend = FixtureSemanticBackend()
     assert isinstance(backend, SemanticBackend)
+    snapshot = next(backend.iter_snapshots("qualified_support"))
+    snapshot_id = backend.snapshot_id("qualified_support", snapshot)
     batch = backend.collect(
-        "qualified_support",
-        (
-            backend.snapshot_id(
-                "qualified_support", next(backend.iter_snapshots("qualified_support"))
-            ),
-        ),
+        SemanticRequest((snapshot_id,)),
+        None,
     )
     assert batch.claims[0].candidate_id == "claim"
     assert batch.relations[0].relation_type is EvidenceLinkType.QUALIFIES
+
+
+def test_core_pipeline_runs_with_fixture_free_fake_backend(repository) -> None:
+    class FakeBackend:
+        def collect(self, request: SemanticRequest, repository) -> SemanticBatch:
+            return SemanticBatch(
+                evidence=(EvidenceCandidate("evidence", request.snapshot_ids[0], "A fact"),),
+                claims=(
+                    ClaimCandidate(
+                        "claim",
+                        "A fact",
+                        "subject",
+                        "predicate",
+                        "value",
+                        evidence_candidate_ids=("evidence",),
+                    ),
+                ),
+                relations=(
+                    EvidenceRelationCandidate(
+                        "evidence",
+                        "claim",
+                        EvidenceLinkType.SUPPORTS,
+                        "fake support",
+                    ),
+                ),
+                reference_time=datetime(2026, 1, 1, tzinfo=UTC),
+            )
+
+    source = Source(
+        id="fake-source",
+        canonical_uri="https://fake.invalid/source",
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    repository.save_source(source)
+    snapshot = repository.create_snapshot(
+        source.id,
+        "A fact",
+        snapshot_id="fake-snapshot",
+        retrieved_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    result = DeterministicRefinery(repository, FakeBackend()).run(
+        (snapshot.id,), reference_time=datetime(2026, 1, 1, tzinfo=UTC)
+    )
+
+    assert isinstance(FakeBackend(), SemanticBackend)
+    assert result.fixture_id is None
+    assert [item.stage_name for item in result.stage_runs] == list(CANONICAL_STAGE_NAMES)
 
 
 def test_manifest_store_roundtrip_missing_safe_path_and_tamper(tmp_path) -> None:
@@ -247,6 +299,15 @@ def test_manifest_store_roundtrip_missing_safe_path_and_tamper(tmp_path) -> None
     with pytest.raises(ManifestIntegrityError):
         store.read("manifest:" + "manifest-" + "0" * 64)
     path = store.root / f"{manifest.manifest_id}.json"
+    coherent_other = StageManifest("resolve", DETERMINISTIC_PIPELINE_VERSION, ("x",), ("y",))
+    coherent_path = store.root / f"{coherent_other.manifest_id}.json"
+    store.write(coherent_other)
+    path.write_text(coherent_path.read_text(encoding="utf-8"), encoding="utf-8")
+    with pytest.raises(ManifestIntegrityError, match="requested content address"):
+        store.read(manifest.ref)
+    store = StageManifestStore(tmp_path / "simple-tamper")
+    store.write(manifest)
+    path = store.root / f"{manifest.manifest_id}.json"
     path.write_text(
         path.read_text(encoding="utf-8").replace('"output"', '"tampered"'), encoding="utf-8"
     )
@@ -256,10 +317,10 @@ def test_manifest_store_roundtrip_missing_safe_path_and_tamper(tmp_path) -> None
 
 def test_artifacts_are_stable_for_recovery_and_new_for_new_run(repository) -> None:
     runner = DeterministicRefinery(repository)
-    first = runner.run("independent_support")
-    recovered = runner.run("independent_support", recovery_key="recovery-1")
-    recovered_again = runner.run("independent_support", recovery_key="recovery-1")
-    new_run = runner.run("independent_support")
+    first = runner.run_fixture("independent_support")
+    recovered = runner.run_fixture("independent_support", recovery_key="recovery-1")
+    recovered_again = runner.run_fixture("independent_support", recovery_key="recovery-1")
+    new_run = runner.run_fixture("independent_support")
 
     assert recovered.pipeline_run.id == recovered_again.pipeline_run.id
     assert recovered.artifact_ids == recovered_again.artifact_ids
@@ -273,7 +334,7 @@ def test_failure_lifecycle_stops_at_failed_contradiction(repository) -> None:
     runner = DeterministicRefinery(repository)
 
     with pytest.raises(RuntimeError, match="injected failure"):
-        runner.run("direct_conflict", failure_stage="contradiction")
+        runner.run_fixture("direct_conflict", failure_stage="contradiction")
 
     stages = repository.list_stage_runs()
     assert [item.stage_name for item in stages] == [
@@ -291,7 +352,7 @@ def test_failure_lifecycle_stops_at_failed_contradiction(repository) -> None:
 
 
 def test_stage_manifests_match_actual_outputs_and_refs_are_persistent(repository) -> None:
-    result = DeterministicRefinery(repository).run("direct_conflict")
+    result = DeterministicRefinery(repository).run_fixture("direct_conflict")
 
     for stage, input_manifest, output_manifest in zip(
         result.stage_runs, result.input_manifests, result.manifests, strict=True

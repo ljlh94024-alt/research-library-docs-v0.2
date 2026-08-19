@@ -1,6 +1,6 @@
 """Pipeline execution and Phase 1A typed refinery contracts."""
 
-from .backend import FixtureSemanticBackend
+from .backend import FixtureHarness, FixtureSemanticBackend, PreparedFixture
 from .contracts import (
     CANONICAL_STAGE_NAMES,
     AtomBuildInput,
@@ -60,6 +60,7 @@ from .semantic import (
     EvidenceRelationCandidate,
     SemanticBackend,
     SemanticBatch,
+    SemanticRequest,
 )
 
 __all__ = [
@@ -95,6 +96,7 @@ __all__ = [
     "FixtureClaimSpec",
     "FixtureDefinition",
     "FixtureEvidenceSpec",
+    "FixtureHarness",
     "FixtureSemanticBackend",
     "FixtureSnapshotSpec",
     "FixtureSourceSpec",
@@ -106,8 +108,10 @@ __all__ = [
     "ManifestIntegrityError",
     "NormalizationPolicy",
     "ResolutionPolicy",
+    "PreparedFixture",
     "SemanticBackend",
     "SemanticBatch",
+    "SemanticRequest",
     "StageManifest",
     "StageManifestStore",
     "canonical_json",
