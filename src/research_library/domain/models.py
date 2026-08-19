@@ -211,6 +211,7 @@ class ClaimGroup:
     canonical_key: str = ""
     name: str | None = None
     created_at: datetime = field(default_factory=utc_now)
+    created_by_stage_run_id: str | None = None
 
     def __post_init__(self) -> None:
         _required(self.id, "id")
@@ -249,6 +250,7 @@ class Contradiction:
     status: ContradictionStatus = ContradictionStatus.OPEN
     created_at: datetime = field(default_factory=utc_now)
     resolved_at: datetime | None = None
+    created_by_stage_run_id: str | None = None
 
     def __post_init__(self) -> None:
         _required(self.id, "id")

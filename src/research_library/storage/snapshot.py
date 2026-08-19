@@ -5,12 +5,14 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path, PurePosixPath
 
+from .errors import StorageIntegrityError
 
-class ImmutableSnapshotError(RuntimeError):
+
+class ImmutableSnapshotError(StorageIntegrityError):
     """Raised when a snapshot's existing content would be replaced."""
 
 
-class SnapshotIntegrityError(RuntimeError):
+class SnapshotIntegrityError(StorageIntegrityError):
     """Raised when stored bytes do not match the recorded hash."""
 
 
@@ -53,6 +55,43 @@ class SnapshotFilesystem:
         with path.open("xb") as handle:
             handle.write(data)
         return ref.replace("\\", "/"), digest
+
+    def store_with_status(
+        self,
+        source_id: str,
+        snapshot_id: str,
+        content: bytes | str,
+        content_ref: str | None = None,
+    ) -> tuple[str, str, bool]:
+        """Store content and report whether this call created a new file."""
+
+        data = content.encode("utf-8") if isinstance(content, str) else content
+        if not isinstance(data, bytes):
+            raise TypeError("snapshot content must be bytes or str")
+        ref = content_ref or f"{source_id}/{snapshot_id}/content"
+        path = self._path_for_ref(ref)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        digest = self.content_hash(data)
+        if path.exists():
+            if path.read_bytes() != data:
+                raise ImmutableSnapshotError(f"snapshot content already exists: {ref}")
+            return ref.replace("\\", "/"), digest, False
+        with path.open("xb") as handle:
+            handle.write(data)
+        return ref.replace("\\", "/"), digest, True
+
+    def discard_uncommitted(self, content_ref: str, expected_hash: str) -> bool:
+        """Remove only a just-written file whose bytes still match ``expected_hash``."""
+
+        path = self._path_for_ref(content_ref)
+        if not path.exists() or self.content_hash(path.read_bytes()) != expected_hash.lower():
+            return False
+        path.unlink()
+        parent = path.parent
+        while parent != self.root and parent.exists() and not any(parent.iterdir()):
+            parent.rmdir()
+            parent = parent.parent
+        return True
 
     def read(self, content_ref: str, expected_hash: str | None = None) -> bytes:
         path = self._path_for_ref(content_ref)

@@ -34,6 +34,11 @@
 - `docs/decisions/ADR-0013-ingestion-boundaries.md`
 - `docs/decisions/ADR-0014-repository-layout.md` — **统一 `src/research_library/` 与 `data/snapshots/`。**
 - `docs/decisions/ADR-0015-python-foundation.md` — **冻结 Phase 0 最小 Python 技术栈。**
+- `docs/decisions/ADR-0016-phase0-persistence-hardening.md` — **持久化完整性与版本演进规则。**
+
+## Versions
+
+- `docs/versions/phase-0-final-hardening.md` — **Phase 0 持久化完整性加固版本说明。**
 
 ## Roadmap
 

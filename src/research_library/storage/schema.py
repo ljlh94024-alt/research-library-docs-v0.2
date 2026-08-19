@@ -6,7 +6,9 @@ the domain objects exported from ``research_library.domain``.
 
 from sqlalchemy import (
     JSON,
+    CheckConstraint,
     Column,
+    Float,
     ForeignKey,
     Index,
     MetaData,
@@ -73,7 +75,7 @@ source_snapshots = Table(
     Column("content_ref", Text, nullable=False, unique=True),
     Column("mime_type", String(128)),
     Column("metadata", JSON, nullable=False),
-    Column("created_by_stage_run_id", String(128)),
+    Column("created_by_stage_run_id", String(128), ForeignKey("stage_runs.id")),
 )
 
 evidence = Table(
@@ -87,7 +89,7 @@ evidence = Table(
     Column("extraction_method", String(128)),
     Column("metadata", JSON, nullable=False),
     Column("created_at", String(64), nullable=False),
-    Column("created_by_stage_run_id", String(128)),
+    Column("created_by_stage_run_id", String(128), ForeignKey("stage_runs.id")),
 )
 
 claims = Table(
@@ -100,9 +102,14 @@ claims = Table(
     Column("object", Text),
     Column("qualifiers", JSON, nullable=False),
     Column("temporal_scope", Text),
-    Column("extraction_confidence", String(32)),
+    Column("extraction_confidence", Float),
     Column("created_at", String(64), nullable=False),
-    Column("created_by_stage_run_id", String(128)),
+    Column("created_by_stage_run_id", String(128), ForeignKey("stage_runs.id")),
+    CheckConstraint(
+        "extraction_confidence IS NULL OR "
+        "(extraction_confidence >= 0.0 AND extraction_confidence <= 1.0)",
+        name="ck_claims_extraction_confidence_range",
+    ),
 )
 
 claim_groups = Table(
@@ -112,6 +119,7 @@ claim_groups = Table(
     Column("canonical_key", Text, nullable=False, unique=True),
     Column("name", Text),
     Column("created_at", String(64), nullable=False),
+    Column("created_by_stage_run_id", String(128), ForeignKey("stage_runs.id")),
 )
 
 claim_group_members = Table(
@@ -130,7 +138,7 @@ evidence_links = Table(
     Column("relation_type", String(32), nullable=False),
     Column("rationale", Text),
     Column("created_at", String(64), nullable=False),
-    Column("created_by_stage_run_id", String(128)),
+    Column("created_by_stage_run_id", String(128), ForeignKey("stage_runs.id")),
 )
 
 contradictions = Table(
@@ -145,6 +153,7 @@ contradictions = Table(
     Column("status", String(32), nullable=False),
     Column("created_at", String(64), nullable=False),
     Column("resolved_at", String(64)),
+    Column("created_by_stage_run_id", String(128), ForeignKey("stage_runs.id")),
 )
 
 resolved_claims = Table(
@@ -154,11 +163,15 @@ resolved_claims = Table(
     Column("claim_group_id", String(128), ForeignKey("claim_groups.id"), nullable=False),
     Column("canonical_statement", Text, nullable=False),
     Column("status", String(64), nullable=False),
-    Column("confidence", String(32)),
+    Column("confidence", Float),
     Column("resolution_reason", Text),
     Column("validity", Text),
     Column("created_at", String(64), nullable=False),
-    Column("created_by_stage_run_id", String(128)),
+    Column("created_by_stage_run_id", String(128), ForeignKey("stage_runs.id")),
+    CheckConstraint(
+        "confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0)",
+        name="ck_resolved_claims_confidence_range",
+    ),
 )
 
 knowledge_atoms = Table(
@@ -167,10 +180,14 @@ knowledge_atoms = Table(
     Column("id", String(128), primary_key=True),
     Column("resolved_claim_id", String(128), ForeignKey("resolved_claims.id"), nullable=False),
     Column("statement", Text, nullable=False),
-    Column("confidence", String(32)),
+    Column("confidence", Float),
     Column("qualifiers", JSON, nullable=False),
     Column("created_at", String(64), nullable=False),
-    Column("created_by_stage_run_id", String(128)),
+    Column("created_by_stage_run_id", String(128), ForeignKey("stage_runs.id")),
+    CheckConstraint(
+        "confidence IS NULL OR (confidence >= 0.0 AND confidence <= 1.0)",
+        name="ck_knowledge_atoms_confidence_range",
+    ),
 )
 
 source_dependencies = Table(
@@ -180,8 +197,13 @@ source_dependencies = Table(
     Column("source_id", String(128), ForeignKey("sources.id"), nullable=False),
     Column("parent_source_id", String(128), ForeignKey("sources.id"), nullable=False),
     Column("dependency_group", String(128)),
-    Column("independence_score", String(32)),
+    Column("independence_score", Float),
     Column("reason", Text),
+    Column("created_by_stage_run_id", String(128), ForeignKey("stage_runs.id")),
+    CheckConstraint(
+        "independence_score IS NULL OR (independence_score >= 0.0 AND independence_score <= 1.0)",
+        name="ck_source_dependencies_independence_score_range",
+    ),
 )
 
 human_overrides = Table(
@@ -201,3 +223,15 @@ Index("ix_evidence_links_claim_id", evidence_links.c.claim_id)
 Index("ix_evidence_links_evidence_id", evidence_links.c.evidence_id)
 Index("ix_stage_runs_pipeline_run_id", stage_runs.c.pipeline_run_id)
 Index("ix_claims_statement", claims.c.statement)
+Index("ix_source_snapshots_created_by_stage_run_id", source_snapshots.c.created_by_stage_run_id)
+Index("ix_evidence_created_by_stage_run_id", evidence.c.created_by_stage_run_id)
+Index("ix_claims_created_by_stage_run_id", claims.c.created_by_stage_run_id)
+Index("ix_claim_groups_created_by_stage_run_id", claim_groups.c.created_by_stage_run_id)
+Index("ix_evidence_links_created_by_stage_run_id", evidence_links.c.created_by_stage_run_id)
+Index("ix_contradictions_created_by_stage_run_id", contradictions.c.created_by_stage_run_id)
+Index("ix_resolved_claims_created_by_stage_run_id", resolved_claims.c.created_by_stage_run_id)
+Index("ix_knowledge_atoms_created_by_stage_run_id", knowledge_atoms.c.created_by_stage_run_id)
+Index(
+    "ix_source_dependencies_created_by_stage_run_id",
+    source_dependencies.c.created_by_stage_run_id,
+)
