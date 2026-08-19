@@ -7,6 +7,7 @@ from sqlalchemy import create_engine
 from research_library.domain import (
     Claim,
     ClaimGroup,
+    ClaimGroupMembership,
     ConfidenceAssessment,
     Evidence,
     EvidenceLink,
@@ -29,15 +30,30 @@ NOW = datetime(2026, 8, 19, tzinfo=UTC)
 
 
 def _phase1_chain(repository, *, decision_status=ResolvedClaimStatus.RESOLVED):
-    pipeline = repository.save_pipeline_run(PipelineRun(id="phase1-pipeline", started_at=NOW))
-    stage = repository.save_stage_run(
-        StageRun(
-            id="phase1-stage",
-            pipeline_run_id=pipeline.id,
-            stage_name="resolve",
-            started_at=NOW,
-        )
+    pipeline = repository.save_pipeline_run(
+        PipelineRun(id="phase1-pipeline", pipeline_version="phase1a", started_at=NOW)
     )
+    stages = {
+        stage_name: repository.save_stage_run(
+            StageRun(
+                id=f"phase1-{stage_name}",
+                pipeline_run_id=pipeline.id,
+                stage_name=stage_name,
+                started_at=NOW,
+            )
+        )
+        for stage_name in (
+            "evidence_extract",
+            "claim_extract",
+            "normalize",
+            "evidence_link",
+            "independence",
+            "contradiction",
+            "resolve",
+            "confidence",
+            "atom_build",
+        )
+    }
     source = repository.save_source(
         Source(id="phase1-source", canonical_uri="https://example.test/phase1", created_at=NOW)
     )
@@ -54,7 +70,7 @@ def _phase1_chain(repository, *, decision_status=ResolvedClaimStatus.RESOLVED):
             reason="mirror signal",
             signals={"same_domain": True},
             created_at=NOW,
-            created_by_stage_run_id=stage.id,
+            created_by_stage_run_id=stages["independence"].id,
         )
     )
     snapshot = repository.create_snapshot(
@@ -62,7 +78,7 @@ def _phase1_chain(repository, *, decision_status=ResolvedClaimStatus.RESOLVED):
         b"phase 1 evidence",
         snapshot_id="phase1-snapshot",
         retrieved_at=NOW,
-        created_by_stage_run_id=stage.id,
+        created_by_stage_run_id=stages["evidence_extract"].id,
     )
     evidence = repository.save_evidence(
         Evidence(
@@ -70,7 +86,7 @@ def _phase1_chain(repository, *, decision_status=ResolvedClaimStatus.RESOLVED):
             snapshot_id=snapshot.id,
             text="phase 1 quote",
             created_at=NOW,
-            created_by_stage_run_id=stage.id,
+            created_by_stage_run_id=stages["evidence_extract"].id,
         )
     )
     claim = repository.save_claim(
@@ -81,7 +97,7 @@ def _phase1_chain(repository, *, decision_status=ResolvedClaimStatus.RESOLVED):
             predicate="has",
             object="refinery",
             created_at=NOW,
-            created_by_stage_run_id=stage.id,
+            created_by_stage_run_id=stages["claim_extract"].id,
         )
     )
     group = repository.save_claim_group(
@@ -93,17 +109,24 @@ def _phase1_chain(repository, *, decision_status=ResolvedClaimStatus.RESOLVED):
             predicate="has",
             qualifiers={"scope": "current"},
             created_at=NOW,
-            created_by_stage_run_id=stage.id,
+            created_by_stage_run_id=stages["normalize"].id,
         )
     )
-    repository.add_claim_to_group(group.id, claim.id)
+    repository.save_claim_group_membership(
+        ClaimGroupMembership(
+            claim_group_id=group.id,
+            claim_id=claim.id,
+            created_at=NOW,
+            created_by_stage_run_id=stages["normalize"].id,
+        )
+    )
     link = repository.save_evidence_link(
         EvidenceLink(
             id="phase1-link",
             evidence_id=evidence.id,
             claim_id=claim.id,
             created_at=NOW,
-            created_by_stage_run_id=stage.id,
+            created_by_stage_run_id=stages["evidence_link"].id,
         )
     )
     decision = repository.save_resolution_decision(
@@ -114,7 +137,7 @@ def _phase1_chain(repository, *, decision_status=ResolvedClaimStatus.RESOLVED):
             status=decision_status,
             resolution_reason="the direct evidence is in scope",
             created_at=NOW,
-            created_by_stage_run_id=stage.id,
+            created_by_stage_run_id=stages["resolve"].id,
         )
     )
     claim_input = repository.save_resolution_claim_input(
@@ -125,7 +148,7 @@ def _phase1_chain(repository, *, decision_status=ResolvedClaimStatus.RESOLVED):
             role=ResolutionInputRole.SUPPORTING,
             reason="selected direct claim",
             created_at=NOW,
-            created_by_stage_run_id=stage.id,
+            created_by_stage_run_id=stages["resolve"].id,
         )
     )
     evidence_input = repository.save_resolution_evidence_input(
@@ -136,7 +159,7 @@ def _phase1_chain(repository, *, decision_status=ResolvedClaimStatus.RESOLVED):
             role=ResolutionInputRole.SUPPORTING,
             reason="selected direct evidence",
             created_at=NOW,
-            created_by_stage_run_id=stage.id,
+            created_by_stage_run_id=stages["resolve"].id,
         )
     )
     assessment = repository.save_confidence_assessment(
@@ -156,7 +179,7 @@ def _phase1_chain(repository, *, decision_status=ResolvedClaimStatus.RESOLVED):
             score=0.85,
             reasons={"directness": ["direct quote"]},
             created_at=NOW,
-            created_by_stage_run_id=stage.id,
+            created_by_stage_run_id=stages["confidence"].id,
         )
     )
     resolved = repository.save_resolved_claim(
@@ -170,7 +193,7 @@ def _phase1_chain(repository, *, decision_status=ResolvedClaimStatus.RESOLVED):
             resolution_decision_id=decision.id,
             confidence_assessment_id=assessment.id,
             created_at=NOW,
-            created_by_stage_run_id=stage.id,
+            created_by_stage_run_id=stages["confidence"].id,
         )
     )
     atom = repository.save_knowledge_atom(
@@ -184,7 +207,7 @@ def _phase1_chain(repository, *, decision_status=ResolvedClaimStatus.RESOLVED):
             confidence=assessment.score,
             status=KnowledgeAtomStatus.ACTIVE,
             created_at=NOW,
-            created_by_stage_run_id=stage.id,
+            created_by_stage_run_id=stages["atom_build"].id,
         )
     )
     return locals()
@@ -193,6 +216,9 @@ def _phase1_chain(repository, *, decision_status=ResolvedClaimStatus.RESOLVED):
 def test_phase1_repository_persists_formal_resolution_and_provenance(repository) -> None:
     chain = _phase1_chain(repository)
     assert repository.get_source_dependency("phase1-dependency") == chain["dependency"]
+    membership = repository.get_claim_group_membership("phase1-group", "phase1-claim")
+    assert membership is not None
+    assert membership.created_by_stage_run_id == chain["stages"]["normalize"].id
     assert repository.list_resolution_decisions_for_group("phase1-group") == (chain["decision"],)
     assert repository.list_resolution_claim_inputs("phase1-decision") == (
         chain["claim_input"],
@@ -209,6 +235,7 @@ def test_phase1_repository_persists_formal_resolution_and_provenance(repository)
     assert provenance.resolution_claim_inputs == (chain["claim_input"],)
     assert provenance.resolution_evidence_inputs == (chain["evidence_input"],)
     assert provenance.confidence_assessment == chain["assessment"]
+    assert provenance.claim_group_memberships[0].claim_id == chain["claim"].id
     assert provenance.claims == (chain["claim"],)
     assert provenance.evidences == (chain["evidence"],)
 
@@ -216,6 +243,7 @@ def test_phase1_repository_persists_formal_resolution_and_provenance(repository)
     assert {
         step.entity_type for step in processing.steps
     } >= {
+        "claim_group_membership",
         "resolution_decision",
         "resolution_claim_input",
         "resolution_evidence_input",
@@ -338,6 +366,121 @@ def test_resolved_claim_requires_both_phase1_links_or_neither(repository) -> Non
                 resolution_decision_id=chain["decision"].id,
             )
         )
+
+
+def test_phase1_confidence_resolved_claim_cannot_use_legacy_null_links(repository) -> None:
+    chain = _phase1_chain(repository)
+    with pytest.raises(StorageIntegrityError, match="both.*ConfidenceAssessment"):
+        repository.save_resolved_claim(
+            ResolvedClaim(
+                id="phase1-null-links",
+                claim_group_id=chain["group"].id,
+                canonical_statement=chain["decision"].canonical_statement,
+                status=chain["decision"].status,
+                confidence=chain["assessment"].score,
+                created_at=NOW,
+                created_by_stage_run_id=chain["stages"]["confidence"].id,
+            )
+        )
+
+
+def test_phase1_atom_cannot_promote_a_legacy_null_link_claim(repository) -> None:
+    chain = _phase1_chain(repository)
+    legacy_pipeline = repository.save_pipeline_run(
+        PipelineRun(id="legacy-pipeline", pipeline_version="phase0", started_at=NOW)
+    )
+    legacy_stage = repository.save_stage_run(
+        StageRun(
+            id="legacy-stage",
+            pipeline_run_id=legacy_pipeline.id,
+            stage_name="fixture",
+            started_at=NOW,
+        )
+    )
+    legacy_group = repository.save_claim_group(
+        ClaimGroup(
+            id="legacy-claim-group",
+            canonical_key="legacy-claim-key",
+            canonical_statement="legacy claim",
+            created_at=NOW,
+        )
+    )
+    legacy_resolved = repository.save_resolved_claim(
+        ResolvedClaim(
+            id="legacy-null-link-resolved",
+            claim_group_id=legacy_group.id,
+            canonical_statement="legacy claim",
+            status=ResolvedClaimStatus.RESOLVED,
+            confidence=0.5,
+            created_at=NOW,
+            created_by_stage_run_id=legacy_stage.id,
+        )
+    )
+    with pytest.raises(StorageIntegrityError, match="formal resolved claim chain"):
+        repository.save_knowledge_atom(
+            KnowledgeAtom(
+                id="phase1-atom-over-legacy",
+                resolved_claim_id=legacy_resolved.id,
+                statement="legacy claim",
+                confidence=0.5,
+                status=KnowledgeAtomStatus.ACTIVE,
+                created_at=NOW,
+                created_by_stage_run_id=chain["stages"]["atom_build"].id,
+            )
+        )
+
+
+def test_phase1_membership_is_idempotent_and_divergent_attribution_is_rejected(repository) -> None:
+    _phase1_chain(repository)
+    membership = repository.get_claim_group_membership("phase1-group", "phase1-claim")
+    assert membership is not None
+    assert repository.save_claim_group_membership(membership) == membership
+    with pytest.raises(ImmutableRecordError, match="ClaimGroupMembership"):
+        repository.save_claim_group_membership(
+            type(membership)(
+                claim_group_id=membership.claim_group_id,
+                claim_id=membership.claim_id,
+                created_at=NOW.replace(microsecond=1),
+                created_by_stage_run_id=membership.created_by_stage_run_id,
+            )
+        )
+
+
+def test_source_dependency_filters_support_source_and_dependency_group(repository) -> None:
+    chain = _phase1_chain(repository)
+    assert repository.list_source_dependencies(source_id="phase1-source") == (chain["dependency"],)
+    assert repository.list_source_dependencies(dependency_group="origin-1") == (
+        chain["dependency"],
+    )
+
+
+def test_phase1_confidence_and_atom_comparisons_use_narrow_float_tolerance(repository) -> None:
+    chain = _phase1_chain(repository)
+    resolved = repository.save_resolved_claim(
+        ResolvedClaim(
+            id="tolerant-resolved",
+            claim_group_id=chain["group"].id,
+            canonical_statement=chain["decision"].canonical_statement,
+            status=chain["decision"].status,
+            confidence=chain["assessment"].score + 5e-13,
+            resolution_decision_id=chain["decision"].id,
+            confidence_assessment_id=chain["assessment"].id,
+            created_at=NOW,
+            created_by_stage_run_id=chain["stages"]["confidence"].id,
+        )
+    )
+    atom = repository.save_knowledge_atom(
+        KnowledgeAtom(
+            id="tolerant-atom",
+            resolved_claim_id=resolved.id,
+            statement=resolved.canonical_statement,
+            confidence=resolved.confidence + 5e-13,
+            status=KnowledgeAtomStatus.ACTIVE,
+            created_at=NOW,
+            created_by_stage_run_id=chain["stages"]["atom_build"].id,
+        )
+    )
+    assert atom.confidence == resolved.confidence + 5e-13
 
 
 def test_knowledge_atom_publication_invariants(repository) -> None:

@@ -268,6 +268,26 @@ class ClaimGroup:
 
 
 @dataclass(frozen=True, slots=True)
+class ClaimGroupMembership:
+    """An auditable claim-to-group normalization decision."""
+
+    claim_group_id: str = ""
+    claim_id: str = ""
+    created_at: datetime | None = field(default_factory=utc_now)
+    created_by_stage_run_id: str | None = None
+
+    def __post_init__(self) -> None:
+        _required(self.claim_group_id, "claim_group_id")
+        _required(self.claim_id, "claim_id")
+        if self.created_at is not None:
+            object.__setattr__(self, "created_at", _utc(self.created_at, "created_at"))
+
+    @property
+    def id(self) -> str:
+        return f"{self.claim_group_id}:{self.claim_id}"
+
+
+@dataclass(frozen=True, slots=True)
 class EvidenceLink:
     id: str = field(default_factory=_id)
     evidence_id: str = ""
@@ -440,6 +460,8 @@ class ConfidenceAssessment:
             value = getattr(self, name)
             if not 0.0 <= value <= 1.0:
                 raise ValueError(f"{name} must be between 0 and 1")
+        if not isinstance(self.evidence_floor_met, bool):
+            raise TypeError("evidence_floor_met must be bool")
         _confidence(self.publish_cap)
         object.__setattr__(self, "reasons", _reasons(self.reasons))
         object.__setattr__(self, "created_at", _utc(self.created_at, "created_at"))

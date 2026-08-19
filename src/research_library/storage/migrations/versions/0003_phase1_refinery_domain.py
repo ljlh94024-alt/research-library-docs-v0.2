@@ -10,6 +10,11 @@ depends_on = None
 
 
 _NEW_INDEXES = (
+    (
+        "ix_claim_group_members_created_by_stage_run_id",
+        "claim_group_members",
+        "created_by_stage_run_id",
+    ),
     ("ix_resolution_decisions_claim_group_id", "resolution_decisions", "claim_group_id"),
     (
         "ix_resolution_decisions_created_by_stage_run_id",
@@ -178,6 +183,10 @@ def upgrade() -> None:
             "score >= 0.0 AND score <= 1.0",
             name="ck_confidence_assessments_score_range",
         ),
+        sa.CheckConstraint(
+            "evidence_floor_met IN (0, 1)",
+            name="ck_confidence_assessments_evidence_floor_met_bool",
+        ),
     )
 
     with op.batch_alter_table("claim_groups", recreate="always") as batch:
@@ -210,6 +219,19 @@ def upgrade() -> None:
         batch.alter_column("relation_type", existing_type=sa.String(64), nullable=False)
         batch.alter_column("signals", existing_type=sa.JSON(), nullable=False)
 
+    with op.batch_alter_table("claim_group_members", recreate="always") as batch:
+        batch.add_column(sa.Column("created_at", sa.String(64), nullable=True))
+        batch.add_column(
+            sa.Column(
+                "created_by_stage_run_id",
+                sa.String(128),
+                sa.ForeignKey(
+                    "stage_runs.id", name="fk_claim_group_members_created_by_stage_run_id"
+                ),
+                nullable=True,
+            )
+        )
+
     with op.batch_alter_table("resolved_claims", recreate="always") as batch:
         batch.add_column(sa.Column("resolution_decision_id", sa.String(128)))
         batch.add_column(sa.Column("confidence_assessment_id", sa.String(128)))
@@ -241,6 +263,10 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     _drop_indexes()
+
+    with op.batch_alter_table("claim_group_members", recreate="always") as batch:
+        batch.drop_column("created_by_stage_run_id")
+        batch.drop_column("created_at")
 
     with op.batch_alter_table("resolved_claims", recreate="always") as batch:
         batch.drop_constraint("fk_resolved_claims_confidence_assessment_id", type_="foreignkey")

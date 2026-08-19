@@ -134,6 +134,8 @@ claim_group_members = Table(
     metadata,
     Column("claim_group_id", String(128), ForeignKey("claim_groups.id"), primary_key=True),
     Column("claim_id", String(128), ForeignKey("claims.id"), primary_key=True),
+    Column("created_at", String(64)),
+    Column("created_by_stage_run_id", String(128), ForeignKey("stage_runs.id")),
 )
 
 evidence_links = Table(
@@ -342,6 +344,10 @@ confidence_assessments = Table(
         "score >= 0.0 AND score <= 1.0",
         name="ck_confidence_assessments_score_range",
     ),
+    CheckConstraint(
+        "evidence_floor_met IN (0, 1)",
+        name="ck_confidence_assessments_evidence_floor_met_bool",
+    ),
 )
 
 human_overrides = Table(
@@ -365,6 +371,10 @@ Index("ix_source_snapshots_created_by_stage_run_id", source_snapshots.c.created_
 Index("ix_evidence_created_by_stage_run_id", evidence.c.created_by_stage_run_id)
 Index("ix_claims_created_by_stage_run_id", claims.c.created_by_stage_run_id)
 Index("ix_claim_groups_created_by_stage_run_id", claim_groups.c.created_by_stage_run_id)
+Index(
+    "ix_claim_group_members_created_by_stage_run_id",
+    claim_group_members.c.created_by_stage_run_id,
+)
 Index("ix_evidence_links_created_by_stage_run_id", evidence_links.c.created_by_stage_run_id)
 Index("ix_contradictions_created_by_stage_run_id", contradictions.c.created_by_stage_run_id)
 Index("ix_resolved_claims_created_by_stage_run_id", resolved_claims.c.created_by_stage_run_id)

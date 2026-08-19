@@ -3,6 +3,7 @@
 from .models import (
     Claim,
     ClaimGroup,
+    ClaimGroupMembership,
     ConfidenceAssessment,
     Contradiction,
     ContradictionSeverity,
@@ -35,6 +36,7 @@ from .models import (
 __all__ = [
     "Claim",
     "ClaimGroup",
+    "ClaimGroupMembership",
     "ConfidenceAssessment",
     "Contradiction",
     "ContradictionSeverity",

@@ -154,8 +154,12 @@ def test_0002_to_0003_backfills_phase0_data_without_promoting_atoms(tmp_path) ->
         atom = repository.get_knowledge_atom("legacy-atom")
         resolved = repository.get_resolved_claim("legacy-resolved")
         dependency = repository.get_source_dependency("legacy-dependency")
+        membership = repository.get_claim_group_membership("legacy-group", "legacy-claim")
         assert group.canonical_statement == "Legacy Name"
         assert group.qualifiers == {}
+        assert membership is not None
+        assert membership.created_at is None
+        assert membership.created_by_stage_run_id is None
         assert atom.status.value == "withheld"
         assert atom.subject is None and atom.predicate is None and atom.object is None
         assert resolved.resolution_decision_id is None

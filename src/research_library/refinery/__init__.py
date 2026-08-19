@@ -18,6 +18,7 @@ from .contracts import (
     IndependenceOutput,
     NormalizeInput,
     NormalizeOutput,
+    RefineryStage,
     ResolveInput,
     ResolveOutput,
     StageContext,
@@ -45,5 +46,6 @@ __all__ = [
     "PipelineRunner",
     "ResolveInput",
     "ResolveOutput",
+    "RefineryStage",
     "StageContext",
 ]

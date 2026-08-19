@@ -9,6 +9,7 @@ from typing import Any, Protocol
 from research_library.domain import (
     Claim,
     ClaimGroup,
+    ClaimGroupMembership,
     ConfidenceAssessment,
     Contradiction,
     Evidence,
@@ -38,6 +39,7 @@ class ProvenanceChain:
     evidences: tuple[Evidence, ...]
     snapshots: tuple[SourceSnapshot, ...]
     sources: tuple[Source, ...]
+    claim_group_memberships: tuple[ClaimGroupMembership, ...] = ()
     resolution_decision: ResolutionDecision | None = None
     resolution_claim_inputs: tuple[ResolutionClaimInput, ...] = ()
     resolution_evidence_inputs: tuple[ResolutionEvidenceInput, ...] = ()
@@ -123,7 +125,23 @@ class Repository(Protocol):
 
     def get_claim_group(self, group_id: str) -> ClaimGroup | None: ...
 
-    def add_claim_to_group(self, claim_group_id: str, claim_id: str) -> None: ...
+    def save_claim_group_membership(
+        self, membership: ClaimGroupMembership
+    ) -> ClaimGroupMembership: ...
+
+    def save_claim_group_member(
+        self, membership: ClaimGroupMembership
+    ) -> ClaimGroupMembership: ...
+
+    def get_claim_group_membership(
+        self, claim_group_id: str, claim_id: str
+    ) -> ClaimGroupMembership | None: ...
+
+    def list_claim_group_memberships(
+        self, claim_group_id: str | None = None, claim_id: str | None = None
+    ) -> tuple[ClaimGroupMembership, ...]: ...
+
+    def add_claim_to_group(self, claim_group_id: str, claim_id: str) -> ClaimGroupMembership: ...
 
     def list_claims_for_group(self, claim_group_id: str) -> tuple[Claim, ...]: ...
 
@@ -148,7 +166,9 @@ class Repository(Protocol):
     def get_source_dependency(self, dependency_id: str) -> SourceDependency | None: ...
 
     def list_source_dependencies(
-        self, source_id: str | None = None
+        self,
+        source_id: str | None = None,
+        dependency_group: str | None = None,
     ) -> tuple[SourceDependency, ...]: ...
 
     def save_resolution_decision(self, decision: ResolutionDecision) -> ResolutionDecision: ...

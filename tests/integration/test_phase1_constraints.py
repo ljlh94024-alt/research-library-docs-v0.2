@@ -61,3 +61,44 @@ def test_source_dependency_database_keeps_fk_integrity(repository) -> None:
                 "VALUES (?, ?, ?, ?, ?)",
                 ("bad-dependency", source.id, "missing-parent", "cites", "{}"),
             )
+
+
+def test_confidence_assessment_database_rejects_non_boolean_floor_flag(repository) -> None:
+    group = repository.save_claim_group(
+        ClaimGroup(id="bool-group", canonical_key="bool", canonical_statement="fact")
+    )
+    decision = repository.save_resolution_decision(
+        ResolutionDecision(
+            id="bool-decision",
+            claim_group_id=group.id,
+            canonical_statement="fact",
+            resolution_reason="boolean constraint fixture",
+        )
+    )
+    with pytest.raises(IntegrityError):
+        with repository.engine.begin() as connection:
+            connection.exec_driver_sql(
+                "INSERT INTO confidence_assessments "
+                "(id, resolution_decision_id, policy_version, source_quality, "
+                "evidence_directness, source_independence, agreement, freshness, "
+                "extraction_confidence, contradiction_penalty, publish_cap, "
+                "evidence_floor_met, score, reasons, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "bool-assessment",
+                    decision.id,
+                    "phase1a-test",
+                    0.5,
+                    0.5,
+                    0.5,
+                    0.5,
+                    0.5,
+                    0.5,
+                    0.0,
+                    None,
+                    2,
+                    0.5,
+                    '{"fixture": ["invalid bool"]}',
+                    "2026-08-19T00:00:00+00:00",
+                ),
+            )

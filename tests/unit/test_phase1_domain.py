@@ -86,6 +86,13 @@ def test_confidence_assessment_requires_components_and_explainable_reasons() -> 
             policy_version="phase1a-v1",
             reasons={"score": []},
         )
+    with pytest.raises(TypeError, match="evidence_floor_met must be bool"):
+        ConfidenceAssessment(
+            resolution_decision_id="decision-1",
+            policy_version="phase1a-v1",
+            evidence_floor_met=1,
+            reasons={"score": ["not a boolean"]},
+        )
 
 
 def test_source_dependency_rejects_self_reference_and_accepts_relation() -> None:

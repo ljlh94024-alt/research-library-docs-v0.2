@@ -37,6 +37,14 @@ which claims or evidence a resolver actually used.
    `ConfidenceAssessment`; cross-object group, status, statement, decision,
    and score consistency is checked by the repository. Legacy rows may keep
    both links null.
+8. `ClaimGroupMembership` is an immutable, composite-identity normalization
+   record. Its creation time and optional `created_by_stage_run_id` make the
+   grouping decision auditable; Phase 0 memberships remain readable with null
+   attribution.
+9. The repository enforces the canonical stage owner for attributed outputs in
+   `phase1*` pipelines. Resolution and confidence objects enforce their owner
+   whenever attributed, while null provenance remains a supported legacy/manual
+   gap.
 
 ## Alternatives considered
 
@@ -54,6 +62,7 @@ which claims or evidence a resolver actually used.
 ## Consequences
 
 The foundation is more explicit and replayable, and a provenance query can
-separate candidates from resolver inputs. It intentionally does not implement
+separate candidates from resolver inputs and expose normalization membership
+attribution. It intentionally does not implement
 confidence weights, semantic extraction, or resolver algorithms; those belong
 to later Phase 1 stages and fixtures.
