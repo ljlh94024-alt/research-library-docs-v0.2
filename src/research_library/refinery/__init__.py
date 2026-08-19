@@ -1,5 +1,51 @@
-"""Phase 0 pipeline boundary; refinery algorithms are deferred."""
+"""Pipeline execution and Phase 1A typed refinery contracts."""
 
+from .contracts import (
+    CANONICAL_STAGE_NAMES,
+    AtomBuildInput,
+    AtomBuildOutput,
+    ClaimExtractInput,
+    ClaimExtractOutput,
+    ConfidenceInput,
+    ConfidenceOutput,
+    ContradictionInput,
+    ContradictionOutput,
+    EvidenceExtractInput,
+    EvidenceExtractOutput,
+    EvidenceLinkInput,
+    EvidenceLinkOutput,
+    IndependenceInput,
+    IndependenceOutput,
+    NormalizeInput,
+    NormalizeOutput,
+    RefineryStage,
+    ResolveInput,
+    ResolveOutput,
+    StageContext,
+)
 from .pipeline import PipelineRunner
 
-__all__ = ["PipelineRunner"]
+__all__ = [
+    "CANONICAL_STAGE_NAMES",
+    "AtomBuildInput",
+    "AtomBuildOutput",
+    "ClaimExtractInput",
+    "ClaimExtractOutput",
+    "ConfidenceInput",
+    "ConfidenceOutput",
+    "ContradictionInput",
+    "ContradictionOutput",
+    "EvidenceExtractInput",
+    "EvidenceExtractOutput",
+    "EvidenceLinkInput",
+    "EvidenceLinkOutput",
+    "IndependenceInput",
+    "IndependenceOutput",
+    "NormalizeInput",
+    "NormalizeOutput",
+    "PipelineRunner",
+    "ResolveInput",
+    "ResolveOutput",
+    "RefineryStage",
+    "StageContext",
+]

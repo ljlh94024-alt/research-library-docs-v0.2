@@ -35,6 +35,7 @@
 - `docs/decisions/ADR-0014-repository-layout.md` — **统一 `src/research_library/` 与 `data/snapshots/`。**
 - `docs/decisions/ADR-0015-python-foundation.md` — **冻结 Phase 0 最小 Python 技术栈。**
 - `docs/decisions/ADR-0016-phase0-persistence-hardening.md` — **持久化完整性与版本演进规则。**
+- `docs/decisions/ADR-0017-phase1-refinery-domain.md` — **Phase 1A Refinery Domain、决策、置信度与发布状态。**
 
 ## Versions
 
@@ -50,6 +51,11 @@
 - `docs/roadmap/mvp-plan.md`
 - `docs/roadmap/non-goals.md`
 - `docs/roadmap/phase-0-acceptance.md` — **Phase 0 验收 Gate。**
+- `docs/roadmap/phase-1-plan.md` — **Phase 1A/1B/1C/1D 分阶段计划与冻结 fixture 预期。**
+
+## Phase 1 Architecture
+
+- `docs/architecture/phase-1-refinery-contracts.md` — **Phase 1A 九阶段 typed contracts 与 ownership。**
 
 ## Operations
 

@@ -53,4 +53,8 @@ def test_knowledge_atom_round_trips_full_provenance(repository) -> None:
     assert chain.evidence.id == evidence.id
     assert chain.snapshot.id == snapshot.id
     assert chain.source.id == source.id
+    assert chain.resolution_decision is None
+    assert chain.resolution_claim_inputs == ()
+    assert chain.resolution_evidence_inputs == ()
+    assert chain.confidence_assessment is None
     assert repository.read_snapshot(snapshot.id) == b"The paper says the sky is blue."

@@ -9,13 +9,19 @@ from typing import Any, Protocol
 from research_library.domain import (
     Claim,
     ClaimGroup,
+    ClaimGroupMembership,
+    ConfidenceAssessment,
     Contradiction,
     Evidence,
     EvidenceLink,
     KnowledgeAtom,
     PipelineRun,
+    ResolutionClaimInput,
+    ResolutionDecision,
+    ResolutionEvidenceInput,
     ResolvedClaim,
     Source,
+    SourceDependency,
     SourceSnapshot,
     StageRun,
 )
@@ -33,6 +39,11 @@ class ProvenanceChain:
     evidences: tuple[Evidence, ...]
     snapshots: tuple[SourceSnapshot, ...]
     sources: tuple[Source, ...]
+    claim_group_memberships: tuple[ClaimGroupMembership, ...] = ()
+    resolution_decision: ResolutionDecision | None = None
+    resolution_claim_inputs: tuple[ResolutionClaimInput, ...] = ()
+    resolution_evidence_inputs: tuple[ResolutionEvidenceInput, ...] = ()
+    confidence_assessment: ConfidenceAssessment | None = None
 
     @property
     def claim(self) -> Claim:
@@ -114,7 +125,23 @@ class Repository(Protocol):
 
     def get_claim_group(self, group_id: str) -> ClaimGroup | None: ...
 
-    def add_claim_to_group(self, claim_group_id: str, claim_id: str) -> None: ...
+    def save_claim_group_membership(
+        self, membership: ClaimGroupMembership
+    ) -> ClaimGroupMembership: ...
+
+    def save_claim_group_member(
+        self, membership: ClaimGroupMembership
+    ) -> ClaimGroupMembership: ...
+
+    def get_claim_group_membership(
+        self, claim_group_id: str, claim_id: str
+    ) -> ClaimGroupMembership | None: ...
+
+    def list_claim_group_memberships(
+        self, claim_group_id: str | None = None, claim_id: str | None = None
+    ) -> tuple[ClaimGroupMembership, ...]: ...
+
+    def add_claim_to_group(self, claim_group_id: str, claim_id: str) -> ClaimGroupMembership: ...
 
     def list_claims_for_group(self, claim_group_id: str) -> tuple[Claim, ...]: ...
 
@@ -133,6 +160,50 @@ class Repository(Protocol):
     def save_resolved_claim(self, resolved_claim: ResolvedClaim) -> ResolvedClaim: ...
 
     def get_resolved_claim(self, resolved_claim_id: str) -> ResolvedClaim | None: ...
+
+    def save_source_dependency(self, dependency: SourceDependency) -> SourceDependency: ...
+
+    def get_source_dependency(self, dependency_id: str) -> SourceDependency | None: ...
+
+    def list_source_dependencies(
+        self,
+        source_id: str | None = None,
+        dependency_group: str | None = None,
+    ) -> tuple[SourceDependency, ...]: ...
+
+    def save_resolution_decision(self, decision: ResolutionDecision) -> ResolutionDecision: ...
+
+    def get_resolution_decision(self, decision_id: str) -> ResolutionDecision | None: ...
+
+    def list_resolution_decisions_for_group(
+        self, claim_group_id: str
+    ) -> tuple[ResolutionDecision, ...]: ...
+
+    def save_resolution_claim_input(self, item: ResolutionClaimInput) -> ResolutionClaimInput: ...
+
+    def list_resolution_claim_inputs(
+        self, resolution_decision_id: str
+    ) -> tuple[ResolutionClaimInput, ...]: ...
+
+    def save_resolution_evidence_input(
+        self, item: ResolutionEvidenceInput
+    ) -> ResolutionEvidenceInput: ...
+
+    def list_resolution_evidence_inputs(
+        self, resolution_decision_id: str
+    ) -> tuple[ResolutionEvidenceInput, ...]: ...
+
+    def save_confidence_assessment(
+        self, assessment: ConfidenceAssessment
+    ) -> ConfidenceAssessment: ...
+
+    def get_confidence_assessment(
+        self, assessment_id: str
+    ) -> ConfidenceAssessment | None: ...
+
+    def list_confidence_assessments_for_decision(
+        self, resolution_decision_id: str
+    ) -> tuple[ConfidenceAssessment, ...]: ...
 
     def save_knowledge_atom(self, atom: KnowledgeAtom) -> KnowledgeAtom: ...
 
