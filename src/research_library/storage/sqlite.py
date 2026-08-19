@@ -37,7 +37,14 @@ from research_library.domain import (
     StageRunStatus,
 )
 
-from .repository import ProvenanceChain
+from .errors import (
+    ImmutableRecordError,
+    InvalidStateTransitionError,
+    SnapshotCommitUncertainError,
+    StorageIntegrityError,
+)
+from .migration_safety import run_migrations_with_safety
+from .repository import ProcessingGap, ProcessingProvenance, ProcessingStep, ProvenanceChain
 from .schema import (
     claim_group_members,
     claim_groups,
@@ -119,7 +126,7 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
         if self.engine.dialect.name != "sqlite":
             return
 
-        @event.listens_for(self.engine, "connect", once=True)
+        @event.listens_for(self.engine, "connect")
         def _set_foreign_keys(dbapi_connection: Any, _connection_record: Any) -> None:
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA foreign_keys=ON")
@@ -133,9 +140,12 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
         config = Config()
         config.set_main_option("script_location", str(migration_dir))
         config.set_main_option("sqlalchemy.url", str(self.engine.url).replace("%", "%%"))
-        with self.engine.begin() as connection:
+        with self.engine.connect() as connection:
             config.attributes["connection"] = connection
-            command.upgrade(config, "head")
+            run_migrations_with_safety(
+                connection,
+                lambda: command.upgrade(config, "head"),
+            )
 
     def close(self) -> None:
         self.engine.dispose()
@@ -148,12 +158,97 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
         return connection.execute(select(table).where(table.c.id == object_id)).mappings().first()
 
     @staticmethod
-    def _upsert(connection: Any, table: Any, values: dict[str, Any]) -> None:
-        existing = connection.execute(select(table.c.id).where(table.c.id == values["id"])).first()
+    def _values_match(
+        existing: Any, values: dict[str, Any], fields: tuple[str, ...] | None = None
+    ) -> bool:
+        keys = fields or tuple(values)
+        for key in keys:
+            expected = values[key]
+            actual = existing[key]
+            if key in {"metadata", "qualifiers"}:
+                if _from_json(actual) != (expected or {}):
+                    return False
+            elif actual != expected:
+                return False
+        return True
+
+    @classmethod
+    def _persist_lifecycle(
+        cls,
+        connection: Any,
+        table: Any,
+        values: dict[str, Any],
+        *,
+        entity_type: str,
+        immutable_fields: tuple[str, ...],
+        mutable_fields: tuple[str, ...],
+        status_field: str | None = None,
+        terminal_statuses: tuple[str, ...] = (),
+    ) -> Any:
+        existing = connection.execute(
+            select(table).where(table.c.id == values["id"])
+        ).mappings().first()
         if existing is None:
+            try:
+                connection.execute(insert(table).values(**values))
+            except IntegrityError as exc:
+                raise StorageIntegrityError(
+                    f"cannot persist {entity_type} {values['id']}: relational integrity failed"
+                ) from exc
+            return cls._row(connection, table, values["id"])
+
+        if not cls._values_match(existing, values, immutable_fields):
+            raise ImmutableRecordError(
+                f"{entity_type} {values['id']} has immutable identity changes"
+            )
+
+        if status_field is not None:
+            old_status = existing[status_field]
+            new_status = values[status_field]
+            if old_status != new_status:
+                if old_status in terminal_statuses:
+                    raise InvalidStateTransitionError(
+                        f"{entity_type} {values['id']} cannot leave terminal state {old_status}"
+                    )
+                if old_status != "started" and not (
+                    entity_type == "Contradiction" and old_status == "open"
+                ):
+                    raise InvalidStateTransitionError(
+                        f"{entity_type} {values['id']} has invalid state transition "
+                        f"{old_status} -> {new_status}"
+                    )
+            elif old_status in terminal_statuses and not cls._values_match(
+                existing, values, mutable_fields
+            ):
+                raise InvalidStateTransitionError(
+                    f"{entity_type} {values['id']} is terminal and only exact replay is allowed"
+                )
+
+        updates = {field: values[field] for field in mutable_fields}
+        if updates:
+            connection.execute(
+                update(table).where(table.c.id == values["id"]).values(**updates)
+            )
+        return cls._row(connection, table, values["id"])
+
+    @classmethod
+    def _insert_immutable(
+        cls, connection: Any, table: Any, values: dict[str, Any], entity_type: str
+    ) -> bool:
+        existing = connection.execute(
+            select(table).where(table.c.id == values["id"])
+        ).mappings().first()
+        if existing is not None:
+            if cls._values_match(existing, values):
+                return False
+            raise ImmutableRecordError(f"{entity_type} {values['id']} is immutable")
+        try:
             connection.execute(insert(table).values(**values))
-        else:
-            connection.execute(update(table).where(table.c.id == values["id"]).values(**values))
+        except IntegrityError as exc:
+            raise StorageIntegrityError(
+                f"cannot persist {entity_type} {values['id']}: relational integrity failed"
+            ) from exc
+        return True
 
     def save_source(self, source: Source) -> Source:
         values = {
@@ -166,8 +261,17 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
             "created_at": _iso(source.created_at),
         }
         with self.engine.begin() as connection:
-            self._upsert(connection, sources, values)
-        return source
+            row = self._persist_lifecycle(
+                connection,
+                sources,
+                values,
+                entity_type="Source",
+                immutable_fields=("id", "source_type", "canonical_uri", "created_at"),
+                mutable_fields=("title", "publisher", "metadata"),
+            )
+        if row is None:
+            raise StorageIntegrityError(f"source disappeared after save: {source.id}")
+        return self._source(row)
 
     def get_source(self, source_id: str) -> Source | None:
         with self.engine.connect() as connection:
@@ -200,7 +304,17 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
         from uuid import uuid4
 
         snapshot_id = snapshot_id or str(uuid4())
-        content_ref, content_hash = self.snapshot_store.store(source_id, snapshot_id, content)
+        if self.get_source(source_id) is None:
+            raise StorageIntegrityError(f"source does not exist: {source_id}")
+        if (
+            created_by_stage_run_id is not None
+            and self.get_stage_run(created_by_stage_run_id) is None
+        ):
+            raise StorageIntegrityError(f"stage run does not exist: {created_by_stage_run_id}")
+
+        content_ref, content_hash, created_new = self.snapshot_store.store_with_status(
+            source_id, snapshot_id, content
+        )
         snapshot = SourceSnapshot(
             id=snapshot_id,
             source_id=source_id,
@@ -211,9 +325,15 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
             metadata=metadata or {},
             created_by_stage_run_id=created_by_stage_run_id,
         )
-        return self.save_snapshot(snapshot)
+        try:
+            return self.save_snapshot(snapshot)
+        except Exception as exc:
+            if created_new and getattr(exc, "snapshot_cleanup_safe", False):
+                self.snapshot_store.discard_uncommitted(content_ref, content_hash)
+            raise
 
     def save_snapshot(self, snapshot: SourceSnapshot) -> SourceSnapshot:
+        self.snapshot_store.verify(snapshot.content_ref, snapshot.content_hash)
         values = {
             "id": snapshot.id,
             "source_id": snapshot.source_id,
@@ -224,19 +344,31 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
             "metadata": snapshot.metadata,
             "created_by_stage_run_id": snapshot.created_by_stage_run_id,
         }
-        with self.engine.begin() as connection:
+        connection = self.engine.connect()
+        transaction = connection.begin()
+        try:
+            self._insert_immutable(connection, source_snapshots, values, "SourceSnapshot")
+            row = self._row(connection, source_snapshots, snapshot.id)
+            if row is None:
+                raise StorageIntegrityError(f"snapshot disappeared before commit: {snapshot.id}")
+            persisted = self._snapshot(row)
             try:
-                connection.execute(insert(source_snapshots).values(**values))
-            except IntegrityError as exc:
-                existing = self._row(connection, source_snapshots, snapshot.id)
-                if (
-                    existing is not None
-                    and existing["content_hash"] == snapshot.content_hash
-                    and existing["content_ref"] == snapshot.content_ref
-                ):
-                    return snapshot
-                raise ValueError("SourceSnapshot is immutable and cannot be replaced") from exc
-        return snapshot
+                transaction.commit()
+            except Exception as exc:
+                raise SnapshotCommitUncertainError(
+                    f"snapshot transaction outcome is uncertain: {snapshot.id}"
+                ) from exc
+            return persisted
+        except SnapshotCommitUncertainError:
+            if transaction.is_active:
+                transaction.rollback()
+            raise
+        except Exception:
+            if transaction.is_active:
+                transaction.rollback()
+            raise
+        finally:
+            connection.close()
 
     def get_snapshot(self, snapshot_id: str) -> SourceSnapshot | None:
         with self.engine.connect() as connection:
@@ -275,8 +407,11 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
             "created_by_stage_run_id": item.created_by_stage_run_id,
         }
         with self.engine.begin() as connection:
-            self._upsert(connection, evidence, values)
-        return item
+            self._insert_immutable(connection, evidence, values, "Evidence")
+        persisted = self.get_evidence(item.id)
+        if persisted is None:
+            raise StorageIntegrityError(f"evidence disappeared after save: {item.id}")
+        return persisted
 
     def get_evidence(self, evidence_id: str) -> Evidence | None:
         with self.engine.connect() as connection:
@@ -304,15 +439,16 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
             "object": item.object,
             "qualifiers": item.qualifiers,
             "temporal_scope": item.temporal_scope,
-            "extraction_confidence": str(item.extraction_confidence)
-            if item.extraction_confidence is not None
-            else None,
+            "extraction_confidence": item.extraction_confidence,
             "created_at": _iso(item.created_at),
             "created_by_stage_run_id": item.created_by_stage_run_id,
         }
         with self.engine.begin() as connection:
-            self._upsert(connection, claims, values)
-        return item
+            self._insert_immutable(connection, claims, values, "Claim")
+        persisted = self.get_claim(item.id)
+        if persisted is None:
+            raise StorageIntegrityError(f"claim disappeared after save: {item.id}")
+        return persisted
 
     def get_claim(self, claim_id: str) -> Claim | None:
         with self.engine.connect() as connection:
@@ -338,10 +474,14 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
             "canonical_key": item.canonical_key,
             "name": item.name,
             "created_at": _iso(item.created_at),
+            "created_by_stage_run_id": item.created_by_stage_run_id,
         }
         with self.engine.begin() as connection:
-            self._upsert(connection, claim_groups, values)
-        return item
+            self._insert_immutable(connection, claim_groups, values, "ClaimGroup")
+        persisted = self.get_claim_group(item.id)
+        if persisted is None:
+            raise StorageIntegrityError(f"claim group disappeared after save: {item.id}")
+        return persisted
 
     def get_claim_group(self, group_id: str) -> ClaimGroup | None:
         with self.engine.connect() as connection:
@@ -353,6 +493,7 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
             canonical_key=row["canonical_key"],
             name=row["name"],
             created_at=_dt(row["created_at"]),
+            created_by_stage_run_id=row["created_by_stage_run_id"],
         )
 
     def add_claim_to_group(self, claim_group_id: str, claim_id: str) -> None:
@@ -382,7 +523,7 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
                     select(claims)
                     .join(claim_group_members, claim_group_members.c.claim_id == claims.c.id)
                     .where(claim_group_members.c.claim_group_id == claim_group_id)
-                    .order_by(claims.c.created_at)
+                    .order_by(claims.c.created_at, claims.c.id)
                 )
                 .mappings()
                 .all()
@@ -402,8 +543,11 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
             "created_by_stage_run_id": item.created_by_stage_run_id,
         }
         with self.engine.begin() as connection:
-            self._upsert(connection, evidence_links, values)
-        return item
+            self._insert_immutable(connection, evidence_links, values, "EvidenceLink")
+        persisted = self.get_evidence_link(item.id)
+        if persisted is None:
+            raise StorageIntegrityError(f"evidence link disappeared after save: {item.id}")
+        return persisted
 
     def get_evidence_link(self, link_id: str) -> EvidenceLink | None:
         with self.engine.connect() as connection:
@@ -423,14 +567,18 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
     def list_evidence_links_for_claim(self, claim_id: str) -> tuple[EvidenceLink, ...]:
         with self.engine.connect() as connection:
             rows = connection.execute(
-                select(evidence_links.c.id).where(evidence_links.c.claim_id == claim_id)
+                select(evidence_links.c.id)
+                .where(evidence_links.c.claim_id == claim_id)
+                .order_by(evidence_links.c.created_at, evidence_links.c.id)
             ).all()
         return tuple(link for row in rows if (link := self.get_evidence_link(row[0])) is not None)
 
     def list_evidence_links_for_evidence(self, evidence_id: str) -> tuple[EvidenceLink, ...]:
         with self.engine.connect() as connection:
             rows = connection.execute(
-                select(evidence_links.c.id).where(evidence_links.c.evidence_id == evidence_id)
+                select(evidence_links.c.id)
+                .where(evidence_links.c.evidence_id == evidence_id)
+                .order_by(evidence_links.c.created_at, evidence_links.c.id)
             ).all()
         return tuple(link for row in rows if (link := self.get_evidence_link(row[0])) is not None)
 
@@ -445,10 +593,33 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
             "status": item.status.value,
             "created_at": _iso(item.created_at),
             "resolved_at": _iso(item.resolved_at),
+            "created_by_stage_run_id": item.created_by_stage_run_id,
         }
         with self.engine.begin() as connection:
-            self._upsert(connection, contradictions, values)
-        return item
+            self._persist_lifecycle(
+                connection,
+                contradictions,
+                values,
+                entity_type="Contradiction",
+                immutable_fields=(
+                    "id",
+                    "claim_a_id",
+                    "claim_b_id",
+                    "type",
+                    "created_at",
+                    "created_by_stage_run_id",
+                ),
+                mutable_fields=("severity", "reason", "status", "resolved_at"),
+                status_field="status",
+                terminal_statuses=(
+                    ContradictionStatus.RESOLVED.value,
+                    ContradictionStatus.DISMISSED.value,
+                ),
+            )
+        persisted = self.get_contradiction(item.id)
+        if persisted is None:
+            raise StorageIntegrityError(f"contradiction disappeared after save: {item.id}")
+        return persisted
 
     def get_contradiction(self, contradiction_id: str) -> Contradiction | None:
         with self.engine.connect() as connection:
@@ -465,6 +636,7 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
             status=ContradictionStatus(row["status"]),
             created_at=_dt(row["created_at"]),
             resolved_at=_dt(row["resolved_at"]),
+            created_by_stage_run_id=row["created_by_stage_run_id"],
         )
 
     def save_resolved_claim(self, item: ResolvedClaim) -> ResolvedClaim:
@@ -473,15 +645,18 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
             "claim_group_id": item.claim_group_id,
             "canonical_statement": item.canonical_statement,
             "status": item.status.value,
-            "confidence": str(item.confidence) if item.confidence is not None else None,
+            "confidence": item.confidence,
             "resolution_reason": item.resolution_reason,
             "validity": item.validity,
             "created_at": _iso(item.created_at),
             "created_by_stage_run_id": item.created_by_stage_run_id,
         }
         with self.engine.begin() as connection:
-            self._upsert(connection, resolved_claims, values)
-        return item
+            self._insert_immutable(connection, resolved_claims, values, "ResolvedClaim")
+        persisted = self.get_resolved_claim(item.id)
+        if persisted is None:
+            raise StorageIntegrityError(f"resolved claim disappeared after save: {item.id}")
+        return persisted
 
     def get_resolved_claim(self, resolved_claim_id: str) -> ResolvedClaim | None:
         with self.engine.connect() as connection:
@@ -505,14 +680,17 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
             "id": item.id,
             "resolved_claim_id": item.resolved_claim_id,
             "statement": item.statement,
-            "confidence": str(item.confidence) if item.confidence is not None else None,
+            "confidence": item.confidence,
             "qualifiers": item.qualifiers,
             "created_at": _iso(item.created_at),
             "created_by_stage_run_id": item.created_by_stage_run_id,
         }
         with self.engine.begin() as connection:
-            self._upsert(connection, knowledge_atoms, values)
-        return item
+            self._insert_immutable(connection, knowledge_atoms, values, "KnowledgeAtom")
+        persisted = self.get_knowledge_atom(item.id)
+        if persisted is None:
+            raise StorageIntegrityError(f"knowledge atom disappeared after save: {item.id}")
+        return persisted
 
     def get_knowledge_atom(self, atom_id: str) -> KnowledgeAtom | None:
         with self.engine.connect() as connection:
@@ -571,6 +749,71 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
             sources=tuple(source_items),
         )
 
+    def get_processing_provenance(self, atom_id: str) -> ProcessingProvenance:
+        """Return the persisted stage and pipeline for every processing output."""
+
+        try:
+            chain = self.get_provenance(atom_id)
+        except (KeyError, ValueError) as exc:
+            raise StorageIntegrityError(f"broken domain provenance for atom {atom_id}") from exc
+
+        entities: list[tuple[str, str, str | None]] = [
+            ("source_snapshot", snapshot.id, snapshot.created_by_stage_run_id)
+            for snapshot in chain.snapshots
+        ]
+        entities.extend(
+            ("evidence", item.id, item.created_by_stage_run_id) for item in chain.evidences
+        )
+        entities.extend(
+            ("evidence_link", item.id, item.created_by_stage_run_id)
+            for item in chain.evidence_links
+        )
+        entities.extend(("claim", item.id, item.created_by_stage_run_id) for item in chain.claims)
+        entities.append(
+            ("claim_group", chain.claim_group.id, chain.claim_group.created_by_stage_run_id)
+        )
+        entities.append(
+            (
+                "resolved_claim",
+                chain.resolved_claim.id,
+                chain.resolved_claim.created_by_stage_run_id,
+            )
+        )
+        entities.append(("knowledge_atom", chain.atom.id, chain.atom.created_by_stage_run_id))
+
+        steps: list[ProcessingStep] = []
+        gaps: list[ProcessingGap] = []
+        for entity_type, entity_id, stage_run_id in entities:
+            if stage_run_id is None:
+                gaps.append(
+                    ProcessingGap(
+                        entity_type=entity_type,
+                        entity_id=entity_id,
+                        reason="not_recorded",
+                    )
+                )
+                continue
+            stage_run = self.get_stage_run(stage_run_id)
+            if stage_run is None:
+                raise StorageIntegrityError(
+                    f"{entity_type} {entity_id} references missing stage run {stage_run_id}"
+                )
+            pipeline_run = self.get_pipeline_run(stage_run.pipeline_run_id)
+            if pipeline_run is None:
+                raise StorageIntegrityError(
+                    f"stage run {stage_run.id} references missing pipeline run "
+                    f"{stage_run.pipeline_run_id}"
+                )
+            steps.append(
+                ProcessingStep(
+                    entity_type=entity_type,
+                    entity_id=entity_id,
+                    stage_run=stage_run,
+                    pipeline_run=pipeline_run,
+                )
+            )
+        return ProcessingProvenance(atom_id=atom_id, steps=tuple(steps), gaps=tuple(gaps))
+
     load_provenance = get_provenance
     trace_knowledge_atom = get_provenance
 
@@ -587,8 +830,48 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
             "metadata": item.metadata,
         }
         with self.engine.begin() as connection:
-            self._upsert(connection, pipeline_runs, values)
-        return item
+            existing_status = connection.execute(
+                select(pipeline_runs.c.status).where(pipeline_runs.c.id == item.id)
+            ).scalar_one_or_none()
+            if existing_status is None and item.status is not PipelineRunStatus.STARTED:
+                raise InvalidStateTransitionError(
+                    f"new PipelineRun {item.id} must start in STARTED state"
+                )
+            if item.status.value in {
+                PipelineRunStatus.SUCCEEDED.value,
+                PipelineRunStatus.FAILED.value,
+            } and existing_status == PipelineRunStatus.STARTED.value:
+                child_statuses = tuple(
+                    connection.execute(
+                        select(stage_runs.c.status).where(stage_runs.c.pipeline_run_id == item.id)
+                    ).scalars()
+                )
+                if item.status is PipelineRunStatus.SUCCEEDED:
+                    if any(status != StageRunStatus.SUCCEEDED.value for status in child_statuses):
+                        raise InvalidStateTransitionError(
+                            f"PipelineRun {item.id} cannot succeed with non-succeeded stages"
+                        )
+                elif any(status == StageRunStatus.STARTED.value for status in child_statuses):
+                    raise InvalidStateTransitionError(
+                        f"PipelineRun {item.id} cannot fail with started stages"
+                    )
+            self._persist_lifecycle(
+                connection,
+                pipeline_runs,
+                values,
+                entity_type="PipelineRun",
+                immutable_fields=("id", "pipeline_version", "started_at", "input_ref", "metadata"),
+                mutable_fields=("status", "finished_at", "output_ref", "error"),
+                status_field="status",
+                terminal_statuses=(
+                    PipelineRunStatus.SUCCEEDED.value,
+                    PipelineRunStatus.FAILED.value,
+                ),
+            )
+        persisted = self.get_pipeline_run(item.id)
+        if persisted is None:
+            raise StorageIntegrityError(f"pipeline run disappeared after save: {item.id}")
+        return persisted
 
     def get_pipeline_run(self, run_id: str) -> PipelineRun | None:
         with self.engine.connect() as connection:
@@ -633,8 +916,54 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
             "error": item.error,
         }
         with self.engine.begin() as connection:
-            self._upsert(connection, stage_runs, values)
-        return item
+            existing_stage = connection.execute(
+                select(stage_runs.c.id).where(stage_runs.c.id == item.id)
+            ).scalar_one_or_none()
+            if existing_stage is None:
+                pipeline_status = connection.execute(
+                    select(pipeline_runs.c.status).where(pipeline_runs.c.id == item.pipeline_run_id)
+                ).scalar_one_or_none()
+                if pipeline_status is None:
+                    raise StorageIntegrityError(
+                        f"pipeline run does not exist: {item.pipeline_run_id}"
+                    )
+                if pipeline_status != PipelineRunStatus.STARTED.value:
+                    raise InvalidStateTransitionError(
+                        f"cannot create StageRun {item.id} under terminal PipelineRun "
+                        f"{item.pipeline_run_id}"
+                    )
+                if item.status is not StageRunStatus.STARTED:
+                    raise InvalidStateTransitionError(
+                        f"new StageRun {item.id} must start in STARTED state"
+                    )
+            self._persist_lifecycle(
+                connection,
+                stage_runs,
+                values,
+                entity_type="StageRun",
+                immutable_fields=(
+                    "id",
+                    "pipeline_run_id",
+                    "stage_name",
+                    "stage_version",
+                    "model",
+                    "provider",
+                    "prompt_id",
+                    "prompt_version",
+                    "input_ref",
+                    "started_at",
+                ),
+                mutable_fields=("status", "finished_at", "output_ref", "error_type", "error"),
+                status_field="status",
+                terminal_statuses=(
+                    StageRunStatus.SUCCEEDED.value,
+                    StageRunStatus.FAILED.value,
+                ),
+            )
+        persisted = self.get_stage_run(item.id)
+        if persisted is None:
+            raise StorageIntegrityError(f"stage run disappeared after save: {item.id}")
+        return persisted
 
     def get_stage_run(self, stage_run_id: str) -> StageRun | None:
         with self.engine.connect() as connection:

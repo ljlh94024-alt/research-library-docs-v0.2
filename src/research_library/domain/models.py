@@ -211,6 +211,7 @@ class ClaimGroup:
     canonical_key: str = ""
     name: str | None = None
     created_at: datetime = field(default_factory=utc_now)
+    created_by_stage_run_id: str | None = None
 
     def __post_init__(self) -> None:
         _required(self.id, "id")
@@ -249,6 +250,7 @@ class Contradiction:
     status: ContradictionStatus = ContradictionStatus.OPEN
     created_at: datetime = field(default_factory=utc_now)
     resolved_at: datetime | None = None
+    created_by_stage_run_id: str | None = None
 
     def __post_init__(self) -> None:
         _required(self.id, "id")
@@ -326,6 +328,29 @@ class PipelineRun:
         if self.finished_at is not None:
             object.__setattr__(self, "finished_at", _utc(self.finished_at, "finished_at"))
         object.__setattr__(self, "metadata", _mapping(self.metadata, "metadata"))
+        if self.status is PipelineRunStatus.STARTED:
+            if (
+                self.finished_at is not None
+                or self.error is not None
+                or self.output_ref is not None
+            ):
+                raise ValueError(
+                    "STARTED PipelineRun cannot have finished_at, error, or output_ref"
+                )
+        elif self.status is PipelineRunStatus.SUCCEEDED:
+            if self.finished_at is None:
+                raise ValueError("SUCCEEDED PipelineRun requires finished_at")
+            if self.error is not None:
+                raise ValueError("SUCCEEDED PipelineRun cannot have error")
+            if self.finished_at < self.started_at:
+                raise ValueError("PipelineRun finished_at must be >= started_at")
+        elif self.status is PipelineRunStatus.FAILED:
+            if self.finished_at is None:
+                raise ValueError("FAILED PipelineRun requires finished_at")
+            if not self.error or not self.error.strip():
+                raise ValueError("FAILED PipelineRun requires a non-empty error")
+            if self.finished_at < self.started_at:
+                raise ValueError("PipelineRun finished_at must be >= started_at")
 
 
 @dataclass(frozen=True, slots=True)
@@ -355,3 +380,26 @@ class StageRun:
         object.__setattr__(self, "started_at", _utc(self.started_at, "started_at"))
         if self.finished_at is not None:
             object.__setattr__(self, "finished_at", _utc(self.finished_at, "finished_at"))
+        if self.status is StageRunStatus.STARTED:
+            if (
+                self.finished_at is not None
+                or self.error is not None
+                or self.error_type is not None
+            ):
+                raise ValueError("STARTED StageRun cannot have finished_at, error, or error_type")
+        elif self.status is StageRunStatus.SUCCEEDED:
+            if self.finished_at is None:
+                raise ValueError("SUCCEEDED StageRun requires finished_at")
+            if self.error is not None or self.error_type is not None:
+                raise ValueError("SUCCEEDED StageRun cannot have error or error_type")
+            if self.finished_at < self.started_at:
+                raise ValueError("StageRun finished_at must be >= started_at")
+        elif self.status is StageRunStatus.FAILED:
+            if self.finished_at is None:
+                raise ValueError("FAILED StageRun requires finished_at")
+            if not self.error or not self.error.strip():
+                raise ValueError("FAILED StageRun requires a non-empty error")
+            if not self.error_type or not self.error_type.strip():
+                raise ValueError("FAILED StageRun requires a non-empty error_type")
+            if self.finished_at < self.started_at:
+                raise ValueError("StageRun finished_at must be >= started_at")
