@@ -244,7 +244,10 @@ def test_confidence_checks_reject_values_outside_zero_to_one(repository) -> None
                 id="confidence-dependency",
                 source_id=source.id,
                 parent_source_id=source.id,
+                relation_type="possibly_dependent",
                 independence_score=0.5,
+                signals={},
+                created_at="2026-08-19T00:00:00+00:00",
             )
         )
 

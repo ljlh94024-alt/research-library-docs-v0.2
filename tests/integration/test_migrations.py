@@ -80,11 +80,11 @@ def _schema_signature(engine) -> dict[str, object]:
     return signature
 
 
-def test_fresh_database_is_at_hardened_head(repository) -> None:
+def test_fresh_database_is_at_phase1a_head(repository) -> None:
     version = repository.engine.connect().exec_driver_sql(
         "SELECT version_num FROM alembic_version"
     ).scalar_one()
-    assert version == "0002_phase0_hardening"
+    assert version == "0003_phase1_refinery_domain"
 
 
 def test_historical_0001_does_not_follow_live_metadata() -> None:
@@ -318,7 +318,7 @@ def test_legacy_numeric_boundaries_convert_to_float(tmp_path) -> None:
     ]
 
 
-def test_hardened_schema_round_trips_0002_to_0001_to_0002(tmp_path) -> None:
+def test_phase1a_schema_round_trips_to_phase0_and_back(tmp_path) -> None:
     engine = sa.create_engine(f"sqlite+pysqlite:///{(tmp_path / 'roundtrip.sqlite').as_posix()}")
     _migrate(engine, "head")
     _downgrade(engine, "0001_phase0")
@@ -331,7 +331,7 @@ def test_hardened_schema_round_trips_0002_to_0001_to_0002(tmp_path) -> None:
     with engine.connect() as connection:
         assert connection.execute(
             sa.text("SELECT version_num FROM alembic_version")
-        ).scalar_one() == "0002_phase0_hardening"
+        ).scalar_one() == "0003_phase1_refinery_domain"
         assert "created_by_stage_run_id" in {
             item["name"] for item in sa.inspect(engine).get_columns("knowledge_atoms")
         }
