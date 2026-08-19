@@ -17,6 +17,15 @@
 | F-005 legacy test circularity | Tests build the legacy schema independently and stamp it as `0001_phase0` before upgrading to head. |
 | F-006 CI duplication/coverage | CI runs for pull requests, `main` pushes, and manual dispatch; it now includes compileall and PR diff checking. |
 
+## Last-mile findings and resolutions
+
+| Finding | Resolution |
+| --- | --- |
+| F-007 SQLite populated legacy migration under FK enforcement | Repository-managed and standalone Alembic upgrades now use a controlled SQLite migration window with FK enforcement temporarily disabled, `PRAGMA foreign_key_check` before commit, rollback on violations, and FK restoration to ON. Populated and corrupt legacy databases cover both paths. |
+| F-008 terminal Pipeline/Stage lifecycle closure | New runs and stages must start in `STARTED`; terminal pipelines cannot receive new stages; pipeline terminal transitions validate child stage states; Domain objects reject incoherent timestamps and error fields. |
+| F-009 Repository protocol parity | `Repository` now exposes `get_resolved_claim`, `create_snapshot`, and `read_snapshot` with concrete-compatible signatures. |
+| F-010 direct Snapshot integrity | Public snapshot saves verify filesystem existence and SHA-256 before DB persistence, including exact replay; missing content is reported as `SnapshotIntegrityError`. |
+
 ## Review evidence
 
 - Migration fresh, real legacy stamp upgrade, numeric conversion, downgrade parity,
@@ -25,6 +34,11 @@
   append-only entities, and processing provenance full/partial/corrupt cases are covered.
 - Snapshot source/stage prevalidation, rollback cleanup, existing-file preservation,
   divergent replay, hash verification, and no post-commit database read are covered.
+- Populated legacy upgrades through Repository and standalone Alembic paths,
+  invalid legacy rollback, terminal lifecycle closure, Domain state coherence,
+  Repository protocol parity, and direct Snapshot boundary checks are covered.
+- Final last-mile local suite currently passes 66 tests; the final pushed head
+  and GitHub CI result are recorded in the handoff report.
 - No runtime or development dependencies were added.
 - No Phase 1 capability is included.
 

@@ -95,7 +95,10 @@ class SnapshotFilesystem:
 
     def read(self, content_ref: str, expected_hash: str | None = None) -> bytes:
         path = self._path_for_ref(content_ref)
-        data = path.read_bytes()
+        try:
+            data = path.read_bytes()
+        except FileNotFoundError as exc:
+            raise SnapshotIntegrityError(f"snapshot content missing: {content_ref}") from exc
         if expected_hash is not None and self.content_hash(data) != expected_hash.lower():
             raise SnapshotIntegrityError(f"SHA-256 mismatch for {content_ref}")
         return data

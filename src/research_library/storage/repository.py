@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from datetime import datetime
+from typing import Any, Protocol
 
 from research_library.domain import (
     Claim,
@@ -87,6 +88,20 @@ class Repository(Protocol):
 
     def get_snapshot(self, snapshot_id: str) -> SourceSnapshot | None: ...
 
+    def create_snapshot(
+        self,
+        source_id: str,
+        content: bytes | str,
+        *,
+        snapshot_id: str | None = None,
+        retrieved_at: datetime | None = None,
+        mime_type: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        created_by_stage_run_id: str | None = None,
+    ) -> SourceSnapshot: ...
+
+    def read_snapshot(self, snapshot_id: str) -> bytes: ...
+
     def save_evidence(self, evidence: Evidence) -> Evidence: ...
 
     def get_evidence(self, evidence_id: str) -> Evidence | None: ...
@@ -116,6 +131,8 @@ class Repository(Protocol):
     def get_contradiction(self, contradiction_id: str) -> Contradiction | None: ...
 
     def save_resolved_claim(self, resolved_claim: ResolvedClaim) -> ResolvedClaim: ...
+
+    def get_resolved_claim(self, resolved_claim_id: str) -> ResolvedClaim | None: ...
 
     def save_knowledge_atom(self, atom: KnowledgeAtom) -> KnowledgeAtom: ...
 

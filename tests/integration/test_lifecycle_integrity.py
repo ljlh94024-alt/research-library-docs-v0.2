@@ -97,9 +97,13 @@ def test_pipeline_run_identity_and_terminal_lifecycle_are_protected(repository) 
     with pytest.raises(ImmutableRecordError):
         repository.save_pipeline_run(replace(run, started_at=datetime(2026, 1, 2, tzinfo=UTC)))
     with pytest.raises(InvalidStateTransitionError):
-        repository.save_pipeline_run(replace(finished, status=PipelineRunStatus.STARTED))
+        repository.save_pipeline_run(
+            replace(finished, status=PipelineRunStatus.STARTED, finished_at=None, output_ref=None)
+        )
     with pytest.raises(InvalidStateTransitionError):
-        repository.save_pipeline_run(replace(finished, status=PipelineRunStatus.FAILED))
+        repository.save_pipeline_run(
+            replace(finished, status=PipelineRunStatus.FAILED, error="different terminal")
+        )
     with pytest.raises(InvalidStateTransitionError):
         repository.save_pipeline_run(replace(finished, output_ref="changed-output"))
 
@@ -147,8 +151,17 @@ def test_stage_run_identity_includes_model_prompt_and_pipeline_link(repository) 
     repository.save_stage_run(succeeded)
     assert repository.save_stage_run(succeeded) == succeeded
     with pytest.raises(InvalidStateTransitionError):
-        repository.save_stage_run(replace(succeeded, status=StageRunStatus.STARTED))
+        repository.save_stage_run(
+            replace(succeeded, status=StageRunStatus.STARTED, finished_at=None, output_ref=None)
+        )
     with pytest.raises(InvalidStateTransitionError):
-        repository.save_stage_run(replace(succeeded, status=StageRunStatus.FAILED))
+        repository.save_stage_run(
+            replace(
+                succeeded,
+                status=StageRunStatus.FAILED,
+                error_type="different_terminal",
+                error="different terminal",
+            )
+        )
     with pytest.raises(InvalidStateTransitionError):
         repository.save_stage_run(replace(succeeded, output_ref="changed-output"))

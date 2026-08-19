@@ -7,6 +7,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from research_library.storage.migration_safety import run_migrations_with_safety
 from research_library.storage.schema import metadata
 
 config = context.config
@@ -37,9 +38,13 @@ def run_migrations_online() -> None:
             poolclass=pool.NullPool,
         )
         with connectable.connect() as generated_connection:
-            context.configure(connection=generated_connection, target_metadata=target_metadata)
-            with context.begin_transaction():
-                context.run_migrations()
+            def migrate() -> None:
+                context.configure(connection=generated_connection, target_metadata=target_metadata)
+                with context.begin_transaction():
+                    context.run_migrations()
+
+            run_migrations_with_safety(generated_connection, migrate)
+        connectable.dispose()
         return
     context.configure(connection=connection, target_metadata=target_metadata)
     with context.begin_transaction():

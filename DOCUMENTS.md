@@ -43,6 +43,7 @@
 ## Reviews
 
 - `docs/reviews/phase-0-freeze-review.md` — **PR #1 冻结前二次审计、修复与复核记录。**
+- `docs/reviews/phase-1-entry-notes.md` — **Phase 1 入口观察项；本版本不实现。**
 
 ## Roadmap
 

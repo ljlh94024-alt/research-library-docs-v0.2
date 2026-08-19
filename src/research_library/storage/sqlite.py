@@ -43,6 +43,7 @@ from .errors import (
     SnapshotCommitUncertainError,
     StorageIntegrityError,
 )
+from .migration_safety import run_migrations_with_safety
 from .repository import ProcessingGap, ProcessingProvenance, ProcessingStep, ProvenanceChain
 from .schema import (
     claim_group_members,
@@ -139,9 +140,12 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
         config = Config()
         config.set_main_option("script_location", str(migration_dir))
         config.set_main_option("sqlalchemy.url", str(self.engine.url).replace("%", "%%"))
-        with self.engine.begin() as connection:
+        with self.engine.connect() as connection:
             config.attributes["connection"] = connection
-            command.upgrade(config, "head")
+            run_migrations_with_safety(
+                connection,
+                lambda: command.upgrade(config, "head"),
+            )
 
     def close(self) -> None:
         self.engine.dispose()
@@ -329,6 +333,7 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
             raise
 
     def save_snapshot(self, snapshot: SourceSnapshot) -> SourceSnapshot:
+        self.snapshot_store.verify(snapshot.content_ref, snapshot.content_hash)
         values = {
             "id": snapshot.id,
             "source_id": snapshot.source_id,
@@ -825,6 +830,31 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
             "metadata": item.metadata,
         }
         with self.engine.begin() as connection:
+            existing_status = connection.execute(
+                select(pipeline_runs.c.status).where(pipeline_runs.c.id == item.id)
+            ).scalar_one_or_none()
+            if existing_status is None and item.status is not PipelineRunStatus.STARTED:
+                raise InvalidStateTransitionError(
+                    f"new PipelineRun {item.id} must start in STARTED state"
+                )
+            if item.status.value in {
+                PipelineRunStatus.SUCCEEDED.value,
+                PipelineRunStatus.FAILED.value,
+            } and existing_status == PipelineRunStatus.STARTED.value:
+                child_statuses = tuple(
+                    connection.execute(
+                        select(stage_runs.c.status).where(stage_runs.c.pipeline_run_id == item.id)
+                    ).scalars()
+                )
+                if item.status is PipelineRunStatus.SUCCEEDED:
+                    if any(status != StageRunStatus.SUCCEEDED.value for status in child_statuses):
+                        raise InvalidStateTransitionError(
+                            f"PipelineRun {item.id} cannot succeed with non-succeeded stages"
+                        )
+                elif any(status == StageRunStatus.STARTED.value for status in child_statuses):
+                    raise InvalidStateTransitionError(
+                        f"PipelineRun {item.id} cannot fail with started stages"
+                    )
             self._persist_lifecycle(
                 connection,
                 pipeline_runs,
@@ -886,6 +916,26 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
             "error": item.error,
         }
         with self.engine.begin() as connection:
+            existing_stage = connection.execute(
+                select(stage_runs.c.id).where(stage_runs.c.id == item.id)
+            ).scalar_one_or_none()
+            if existing_stage is None:
+                pipeline_status = connection.execute(
+                    select(pipeline_runs.c.status).where(pipeline_runs.c.id == item.pipeline_run_id)
+                ).scalar_one_or_none()
+                if pipeline_status is None:
+                    raise StorageIntegrityError(
+                        f"pipeline run does not exist: {item.pipeline_run_id}"
+                    )
+                if pipeline_status != PipelineRunStatus.STARTED.value:
+                    raise InvalidStateTransitionError(
+                        f"cannot create StageRun {item.id} under terminal PipelineRun "
+                        f"{item.pipeline_run_id}"
+                    )
+                if item.status is not StageRunStatus.STARTED:
+                    raise InvalidStateTransitionError(
+                        f"new StageRun {item.id} must start in STARTED state"
+                    )
             self._persist_lifecycle(
                 connection,
                 stage_runs,

@@ -98,11 +98,14 @@ def test_snapshot_existing_file_is_preserved_when_replay_save_fails(
 
 def test_save_snapshot_does_not_read_database_after_commit(repository, monkeypatch) -> None:
     source = _source(repository)
+    content_ref, content_hash = repository.snapshot_store.store(
+        source.id, "snapshot-no-post-commit-read", b"snapshot bytes"
+    )
     snapshot = SourceSnapshot(
         id="snapshot-no-post-commit-read",
         source_id=source.id,
-        content_hash="b" * 64,
-        content_ref="source-lifecycle/snapshot-no-post-commit-read/content",
+        content_hash=content_hash,
+        content_ref=content_ref,
         retrieved_at=TIMESTAMP,
     )
 
