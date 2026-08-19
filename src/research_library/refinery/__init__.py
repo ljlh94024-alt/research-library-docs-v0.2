@@ -1,5 +1,6 @@
 """Pipeline execution and Phase 1A typed refinery contracts."""
 
+from .backend import FixtureHarness, FixtureSemanticBackend, PreparedFixture
 from .contracts import (
     CANONICAL_STAGE_NAMES,
     AtomBuildInput,
@@ -23,7 +24,44 @@ from .contracts import (
     ResolveOutput,
     StageContext,
 )
+from .deterministic import (
+    DETERMINISTIC_PIPELINE_VERSION,
+    AtomPolicy,
+    ConfidencePolicy,
+    ContradictionPolicy,
+    DeterministicRefinery,
+    DeterministicRefineryResult,
+    IndependencePolicy,
+    NormalizationPolicy,
+    ResolutionPolicy,
+)
+from .fixtures import (
+    GOLDEN_FIXTURE_IDS,
+    FixtureClaimSpec,
+    FixtureDefinition,
+    FixtureEvidenceSpec,
+    FixtureSnapshotSpec,
+    FixtureSourceSpec,
+    get_golden_fixture,
+    golden_fixtures,
+)
+from .manifests import (
+    ManifestIntegrityError,
+    StageManifest,
+    StageManifestStore,
+    canonical_json,
+    stable_artifact_id,
+)
 from .pipeline import PipelineRunner
+from .semantic import (
+    ClaimCandidate,
+    DependencySignal,
+    EvidenceCandidate,
+    EvidenceRelationCandidate,
+    SemanticBackend,
+    SemanticBatch,
+    SemanticRequest,
+)
 
 __all__ = [
     "CANONICAL_STAGE_NAMES",
@@ -48,4 +86,36 @@ __all__ = [
     "ResolveOutput",
     "RefineryStage",
     "StageContext",
+    "AtomPolicy",
+    "ClaimCandidate",
+    "ConfidencePolicy",
+    "ContradictionPolicy",
+    "DETERMINISTIC_PIPELINE_VERSION",
+    "DeterministicRefinery",
+    "DeterministicRefineryResult",
+    "FixtureClaimSpec",
+    "FixtureDefinition",
+    "FixtureEvidenceSpec",
+    "FixtureHarness",
+    "FixtureSemanticBackend",
+    "FixtureSnapshotSpec",
+    "FixtureSourceSpec",
+    "GOLDEN_FIXTURE_IDS",
+    "DependencySignal",
+    "EvidenceCandidate",
+    "EvidenceRelationCandidate",
+    "IndependencePolicy",
+    "ManifestIntegrityError",
+    "NormalizationPolicy",
+    "ResolutionPolicy",
+    "PreparedFixture",
+    "SemanticBackend",
+    "SemanticBatch",
+    "SemanticRequest",
+    "StageManifest",
+    "StageManifestStore",
+    "canonical_json",
+    "get_golden_fixture",
+    "golden_fixtures",
+    "stable_artifact_id",
 ]

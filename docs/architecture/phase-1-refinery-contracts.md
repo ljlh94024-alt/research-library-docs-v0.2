@@ -1,7 +1,8 @@
 # Phase 1 Refinery Contracts
 
-Phase 1A defines the typed boundaries of the Knowledge Refinery without
-implementing semantic behavior. Every input and output is a frozen, slotted
+Phase 1A defines the typed boundaries of the Knowledge Refinery. Phase 1B
+implements deterministic semantic behavior over those boundaries; no external
+provider is part of this phase. Every input and output is a frozen, slotted
 dataclass containing copied immutable ID tuples, so a stage can be rerun without
 passing implicit global state or retaining mutable caller collections.
 
@@ -62,8 +63,24 @@ iterables into tuples during construction.
 The repository also supports querying `SourceDependency` by either `source_id`
 or `dependency_group`, independently or together.
 
-## Phase boundary
+## Phase 1B deterministic implementation
 
-Phase 1A supplies contracts and persistence only. Deterministic fixture
-processing, source-independence heuristics, contradiction resolution, and
-confidence weighting are intentionally deferred to Phase 1B.
+`SemanticBackend` is the provider-neutral boundary, implemented in Phase 1B
+by `FixtureSemanticBackend` using five frozen local fixtures.
+`DeterministicRefinery` executes the nine stages in canonical order. Formal
+stage outputs are namespaced by StageRun; normal invocations create new
+PipelineRun/StageRun history, while an explicit recovery key enables exact
+retry of one run. Each stage persists both input and output manifests in the
+content-addressed `StageManifestStore`.
+
+Phase 1B policies are explicit and versioned: normalization creates canonical
+claim groups, independence collapses shared-origin reposts, contradiction
+detects incompatible claims, resolution emits canonical statuses and explicit
+inputs, confidence records explainable component scores and publication caps,
+and atom build applies the ACTIVE/WITHHELD publication gate. Snapshot content
+remains append-only, so historical results remain readable after later
+snapshots.
+
+The deterministic backend does not import an LLM SDK, call a network or API,
+create embeddings, or use a vector database. A future structured provider seam
+belongs to Phase 1C and is not started here.
