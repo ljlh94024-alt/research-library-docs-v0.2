@@ -185,4 +185,4 @@ def test_phase1_migration_downgrade_and_reupgrade_are_reversible(tmp_path) -> No
         version = connection.execute(
             sa.text("SELECT version_num FROM alembic_version")
         ).scalar_one()
-        assert version == "0003_phase1_refinery_domain"
+        assert version == "0004_phase1_llm_audit"

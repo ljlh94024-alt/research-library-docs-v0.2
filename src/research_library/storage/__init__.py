@@ -1,5 +1,7 @@
 """Storage contracts and the Phase 0 SQLite/filesystem implementation."""
 
+from research_library.llm.records import LLMCallRecord, LLMCallStatus
+
 from .errors import (
     ImmutableRecordError,
     InvalidStateTransitionError,
@@ -18,6 +20,8 @@ from .sqlite import SQLiteRepository
 
 __all__ = [
     "ImmutableSnapshotError",
+    "LLMCallRecord",
+    "LLMCallStatus",
     "ImmutableRecordError",
     "InvalidStateTransitionError",
     "ProcessingGap",

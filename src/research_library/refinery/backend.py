@@ -7,7 +7,20 @@ from dataclasses import dataclass
 from datetime import UTC
 from typing import Any
 
-from research_library.domain import Source, SourceSnapshot
+from research_library.domain import (
+    Claim,
+    Evidence,
+    EvidenceLinkType,
+    Source,
+    SourceDependencyRelation,
+    SourceSnapshot,
+)
+from research_library.llm.structured import (
+    ClaimExtractionOutput,
+    EvidenceExtractionOutput,
+    EvidenceRelationOutput,
+    SourceDependencyOutput,
+)
 
 from .fixtures import (
     GOLDEN_FIXTURE_IDS,
@@ -27,6 +40,7 @@ from .semantic import (
     SemanticBackend,
     SemanticBatch,
     SemanticRequest,
+    SemanticStageContext,
 )
 
 
@@ -177,6 +191,178 @@ class FixtureSemanticBackend:
             reference_time=reference_time.astimezone(UTC) if reference_time else None,
         )
 
+    def _batch_for_snapshot_ids(self, snapshot_ids: tuple[str, ...]) -> SemanticBatch:
+        return self.collect(SemanticRequest(snapshot_ids), None)
+
+    def extract_evidence(
+        self, context: SemanticStageContext, snapshot_ids: tuple[str, ...]
+    ) -> tuple[EvidenceCandidate, ...]:
+        return self._batch_for_snapshot_ids(snapshot_ids).evidence
+
+    def extract_claims(
+        self, context: SemanticStageContext, evidences: tuple[Evidence, ...]
+    ) -> tuple[ClaimCandidate, ...]:
+        return self._batch_for_snapshot_ids(tuple(item.snapshot_id for item in evidences)).claims
+
+    def classify_evidence_relations(
+        self,
+        context: SemanticStageContext,
+        evidences: tuple[Evidence, ...],
+        claims: tuple[Claim, ...],
+    ) -> tuple[EvidenceRelationCandidate, ...]:
+        return self._batch_for_snapshot_ids(tuple(item.snapshot_id for item in evidences)).relations
+
+    def detect_dependencies(
+        self, context: SemanticStageContext, source_ids: tuple[str, ...]
+    ) -> tuple[DependencySignal, ...]:
+        selected: list[str] = []
+        for fixture in self._fixtures.values():
+            ids = {
+                self.source_id(fixture.fixture_id, item.key, item.canonical_uri)
+                for item in fixture.sources
+            }
+            if set(source_ids) & ids:
+                selected.extend(
+                    self.snapshot_id(fixture.fixture_id, item) for item in fixture.snapshots
+                )
+        if not selected:
+            return ()
+        return self._batch_for_snapshot_ids(tuple(selected)).dependencies
+
+
+class StructuredLLMSemanticBackend:
+    """Stage-aware semantic adapter backed solely by StructuredLLMRuntime."""
+
+    def __init__(self, runtime: Any) -> None:
+        self.runtime = runtime
+
+    @staticmethod
+    def _evidence_candidate_id(snapshot_id: str, text: str) -> str:
+        return stable_artifact_id("semantic-evidence-candidate", snapshot_id, text.strip())
+
+    @staticmethod
+    def _claim_candidate_id(item: Claim | ClaimCandidate) -> str:
+        return stable_artifact_id(
+            "semantic-claim-candidate", item.statement, item.subject, item.predicate,
+            item.object, dict(item.qualifiers), item.temporal_scope,
+        )
+
+    def extract_evidence(
+        self, context: SemanticStageContext, snapshot_ids: tuple[str, ...]
+    ) -> tuple[EvidenceCandidate, ...]:
+        snapshots = [context.repository.get_snapshot(item) for item in snapshot_ids]
+        variables = {
+            "snapshots": [
+                {
+                    "snapshot_id": item.id,
+                    "content": context.repository.read_snapshot(item.id).decode(
+                        "utf-8", errors="replace"
+                    ),
+                }
+                for item in snapshots
+                if item is not None
+            ]
+        }
+        output = self.runtime.invoke(
+            stage_run_id=context.stage_run_id, task_type="evidence_extract",
+            prompt_id="semantic.evidence_extract", prompt_version="v1",
+            schema=EvidenceExtractionOutput, variables=variables,
+        )
+        candidates: list[EvidenceCandidate] = []
+        for index, item in enumerate(output.items):
+            snapshot_id = snapshot_ids[min(index, len(snapshot_ids) - 1)]
+            candidates.append(EvidenceCandidate(
+                candidate_id=self._evidence_candidate_id(snapshot_id, item.text),
+                snapshot_id=snapshot_id, text=item.text, locator=item.locator,
+                context=item.context, extraction_method="structured-llm",
+            ))
+        return tuple(candidates)
+
+    def extract_claims(
+        self, context: SemanticStageContext, evidences: tuple[Evidence, ...]
+    ) -> tuple[ClaimCandidate, ...]:
+        evidence_ids = tuple(
+            str(
+                item.metadata.get("semantic_candidate_id")
+                or self._evidence_candidate_id(item.snapshot_id, item.text)
+            )
+            for item in evidences
+        )
+        output = self.runtime.invoke(
+            stage_run_id=context.stage_run_id, task_type="claim_extract",
+            prompt_id="semantic.claim_extract", prompt_version="v1",
+            schema=ClaimExtractionOutput,
+            variables={
+                "evidences": [item.text for item in evidences],
+                "evidence_candidate_ids": evidence_ids,
+            },
+        )
+        return tuple(
+            ClaimCandidate(
+                candidate_id=self._claim_candidate_id(item), statement=item.statement,
+                subject=item.subject, predicate=item.predicate, object=item.object,
+                qualifiers=item.qualifiers, temporal_scope=item.temporal_scope,
+                extraction_confidence=item.extraction_confidence,
+                evidence_candidate_ids=tuple(item.evidence_candidate_ids),
+            )
+            for item in output.items
+        )
+
+    def classify_evidence_relations(
+        self,
+        context: SemanticStageContext,
+        evidences: tuple[Evidence, ...],
+        claims: tuple[Claim, ...],
+    ) -> tuple[EvidenceRelationCandidate, ...]:
+        evidence_ids = tuple(
+            str(
+                item.metadata.get("semantic_candidate_id")
+                or self._evidence_candidate_id(item.snapshot_id, item.text)
+            )
+            for item in evidences
+        )
+        claim_ids = tuple(self._claim_candidate_id(item) for item in claims)
+        output = self.runtime.invoke(
+            stage_run_id=context.stage_run_id, task_type="evidence_link",
+            prompt_id="semantic.evidence_link", prompt_version="v1",
+            schema=EvidenceRelationOutput,
+            variables={
+                "evidences": [item.text for item in evidences],
+                "claims": [item.statement for item in claims],
+                "evidence_candidate_ids": evidence_ids,
+                "claim_candidate_ids": claim_ids,
+            },
+        )
+        return tuple(
+            EvidenceRelationCandidate(
+                evidence_candidate_id=item.evidence_candidate_id,
+                claim_candidate_id=item.claim_candidate_id,
+                relation_type=EvidenceLinkType(item.relation), rationale=item.rationale,
+            ) for item in output.items
+        )
+
+    def detect_dependencies(
+        self, context: SemanticStageContext, source_ids: tuple[str, ...]
+    ) -> tuple[DependencySignal, ...]:
+        sources = [context.repository.get_source(item) for item in source_ids]
+        output = self.runtime.invoke(
+            stage_run_id=context.stage_run_id, task_type="source_dependency",
+            prompt_id="semantic.source_dependency", prompt_version="v1",
+            schema=SourceDependencyOutput,
+            variables={
+                "sources": [item.canonical_uri for item in sources if item is not None],
+                "source_ids": source_ids,
+            },
+        )
+        return tuple(
+            DependencySignal(
+                source_id=item.source_id, parent_source_id=item.parent_source_id,
+                relation_type=SourceDependencyRelation(item.relation_type),
+                dependency_group=item.dependency_group, independence_score=item.independence_score,
+                reason=item.reason, signals=item.signals,
+            ) for item in output.items
+        )
+
 
 class FixtureHarness:
     """Fixture-only preparation layer; it is not part of SemanticBackend."""
@@ -233,6 +419,7 @@ class FixtureHarness:
 __all__ = [
     "FixtureHarness",
     "FixtureSemanticBackend",
+    "StructuredLLMSemanticBackend",
     "FixtureClaimSpec",
     "FixtureDefinition",
     "FixtureEvidenceSpec",

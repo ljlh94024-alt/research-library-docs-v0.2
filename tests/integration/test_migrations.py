@@ -84,7 +84,7 @@ def test_fresh_database_is_at_phase1a_head(repository) -> None:
     version = repository.engine.connect().exec_driver_sql(
         "SELECT version_num FROM alembic_version"
     ).scalar_one()
-    assert version == "0003_phase1_refinery_domain"
+    assert version == "0004_phase1_llm_audit"
 
 
 def test_historical_0001_does_not_follow_live_metadata() -> None:
@@ -331,7 +331,7 @@ def test_phase1a_schema_round_trips_to_phase0_and_back(tmp_path) -> None:
     with engine.connect() as connection:
         assert connection.execute(
             sa.text("SELECT version_num FROM alembic_version")
-        ).scalar_one() == "0003_phase1_refinery_domain"
+        ).scalar_one() == "0004_phase1_llm_audit"
         assert "created_by_stage_run_id" in {
             item["name"] for item in sa.inspect(engine).get_columns("knowledge_atoms")
         }

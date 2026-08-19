@@ -46,6 +46,7 @@ from research_library.domain import (
     StageRun,
     StageRunStatus,
 )
+from research_library.llm.records import LLMCallRecord, LLMCallStatus
 
 from .errors import (
     ImmutableRecordError,
@@ -64,6 +65,7 @@ from .schema import (
     evidence,
     evidence_links,
     knowledge_atoms,
+    llm_calls,
     pipeline_runs,
     resolution_claim_inputs,
     resolution_decisions,
@@ -1547,9 +1549,101 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
                     entity_id=entity_id,
                     stage_run=stage_run,
                     pipeline_run=pipeline_run,
+                    llm_calls=self.list_llm_calls(stage_run_id=stage_run.id),
                 )
             )
+        known_stage_ids = {step.stage_run.id for step in steps}
+        pipeline_ids = {step.pipeline_run.id for step in steps}
+        for pipeline_id in pipeline_ids:
+            for stage_run in self.list_stage_runs(pipeline_id):
+                calls = self.list_llm_calls(stage_run_id=stage_run.id)
+                if calls and stage_run.id not in known_stage_ids:
+                    pipeline_run = self.get_pipeline_run(stage_run.pipeline_run_id)
+                    if pipeline_run is not None:
+                        steps.append(
+                            ProcessingStep(
+                                entity_type="stage_run",
+                                entity_id=stage_run.id,
+                                stage_run=stage_run,
+                                pipeline_run=pipeline_run,
+                                llm_calls=calls,
+                            )
+                        )
         return ProcessingProvenance(atom_id=atom_id, steps=tuple(steps), gaps=tuple(gaps))
+
+    def save_llm_call(self, record: LLMCallRecord) -> LLMCallRecord:
+        values = {
+            "id": record.id,
+            "logical_request_id": record.logical_request_id,
+            "stage_run_id": record.stage_run_id,
+            "task_type": record.task_type,
+            "provider": record.provider,
+            "model": record.model,
+            "model_role": record.model_role,
+            "prompt_id": record.prompt_id,
+            "prompt_version": record.prompt_version,
+            "schema_id": record.schema_id,
+            "schema_version": record.schema_version,
+            "attempt": record.attempt,
+            "status": record.status.value,
+            "request_id": record.request_id,
+            "request_hash": record.request_hash,
+            "response_hash": record.response_hash,
+            "request_ref": record.request_ref,
+            "response_ref": record.response_ref,
+            "input_tokens": record.input_tokens,
+            "output_tokens": record.output_tokens,
+            "total_tokens": record.total_tokens,
+            "latency_ms": record.latency_ms,
+            "started_at": _iso(record.started_at),
+            "finished_at": _iso(record.finished_at),
+            "error_type": record.error_type,
+            "error": record.error,
+            "metadata": record.metadata,
+        }
+        with self.engine.begin() as connection:
+            self._insert_immutable(connection, llm_calls, values, "LLMCallRecord")
+        persisted = self.get_llm_call(record.id)
+        if persisted is None:
+            raise StorageIntegrityError(f"LLM call disappeared after save: {record.id}")
+        return persisted
+
+    @staticmethod
+    def _llm_call(row: Any) -> LLMCallRecord:
+        return LLMCallRecord(
+            id=row["id"], logical_request_id=row["logical_request_id"],
+            stage_run_id=row["stage_run_id"], task_type=row["task_type"],
+            provider=row["provider"], model=row["model"], model_role=row["model_role"],
+            prompt_id=row["prompt_id"], prompt_version=row["prompt_version"],
+            schema_id=row["schema_id"], schema_version=row["schema_version"],
+            attempt=row["attempt"], status=LLMCallStatus(row["status"]),
+            request_id=row["request_id"], request_hash=row["request_hash"],
+            response_hash=row["response_hash"], request_ref=row["request_ref"],
+            response_ref=row["response_ref"], input_tokens=row["input_tokens"],
+            output_tokens=row["output_tokens"], total_tokens=row["total_tokens"],
+            latency_ms=row["latency_ms"], started_at=_dt(row["started_at"]),
+            finished_at=_dt(row["finished_at"]), error_type=row["error_type"],
+            error=row["error"], metadata=_from_json(row["metadata"]),
+        )
+
+    def get_llm_call(self, call_id: str) -> LLMCallRecord | None:
+        with self.engine.connect() as connection:
+            row = self._row(connection, llm_calls, call_id)
+        return self._llm_call(row) if row else None
+
+    def list_llm_calls(
+        self, stage_run_id: str | None = None, logical_request_id: str | None = None
+    ) -> tuple[LLMCallRecord, ...]:
+        statement = select(llm_calls).order_by(
+            llm_calls.c.started_at, llm_calls.c.attempt, llm_calls.c.id
+        )
+        if stage_run_id is not None:
+            statement = statement.where(llm_calls.c.stage_run_id == stage_run_id)
+        if logical_request_id is not None:
+            statement = statement.where(llm_calls.c.logical_request_id == logical_request_id)
+        with self.engine.connect() as connection:
+            rows = connection.execute(statement).mappings().all()
+        return tuple(self._llm_call(row) for row in rows)
 
     load_provenance = get_provenance
     trace_knowledge_atom = get_provenance
