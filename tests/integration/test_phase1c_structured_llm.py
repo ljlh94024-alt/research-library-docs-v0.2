@@ -20,6 +20,7 @@ from research_library.refinery import (
     SemanticRequest,
     StructuredLLMSemanticBackend,
 )
+from research_library.storage import SQLiteRepository
 
 
 def test_llm_call_repository_is_append_only_and_provenance_exposes_calls(repository) -> None:
@@ -165,7 +166,14 @@ def test_structured_backend_preserves_deterministic_semantic_signature(
     repository, tmp_path, fixture_id
 ) -> None:
     result, runtime = _structured_fixture(repository, tmp_path, fixture_id)
+    with SQLiteRepository(
+        tmp_path / "deterministic.sqlite", tmp_path / "deterministic-snapshots"
+    ) as baseline_repo:
+        baseline = DeterministicRefinery(baseline_repo, FixtureSemanticBackend()).run_fixture(
+            fixture_id
+        )
     assert result.semantic_signature
+    assert result.semantic_signature == baseline.semantic_signature
     assert len(runtime.records) == 4
     assert {item.stage_run_id for item in runtime.records} == {
         item.id

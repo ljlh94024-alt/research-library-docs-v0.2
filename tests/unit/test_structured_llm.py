@@ -78,6 +78,42 @@ def test_retry_preserves_failed_attempt_then_succeeds(tmp_path) -> None:
     assert runtime.records[1].status.value == "succeeded"
 
 
+def test_provider_exception_retries_and_exhaustion_preserves_attempts(tmp_path) -> None:
+    runtime = _runtime(
+        ScriptedFakeLLMClient(
+            [
+                RuntimeError("offline provider failure"),
+                json.dumps({"items": [{"text": "provider recovered"}]}),
+            ]
+        ),
+        tmp_path / "provider-retry",
+    )
+    output = runtime.invoke(
+        stage_run_id="stage-provider",
+        task_type="evidence_extract",
+        prompt_id="semantic.evidence_extract",
+        prompt_version="v1",
+        schema=EvidenceExtractionOutput,
+        variables={"snapshots": []},
+    )
+    assert output.items[0].text == "provider recovered"
+    assert runtime.records[0].error_type == "RuntimeError"
+    exhausted = _runtime(
+        ScriptedFakeLLMClient([RuntimeError("one"), RuntimeError("two")]),
+        tmp_path / "provider-exhausted",
+    )
+    with pytest.raises(LLMRetryExhaustedError):
+        exhausted.invoke(
+            stage_run_id="stage-provider-exhausted",
+            task_type="evidence_extract",
+            prompt_id="semantic.evidence_extract",
+            prompt_version="v1",
+            schema=EvidenceExtractionOutput,
+            variables={"snapshots": []},
+        )
+    assert [item.attempt for item in exhausted.records] == [1, 2]
+
+
 def test_reference_validation_and_exhaustion_do_not_fallback(tmp_path) -> None:
     runtime = _runtime(
         ScriptedFakeLLMClient(
