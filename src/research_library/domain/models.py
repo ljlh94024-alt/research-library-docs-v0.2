@@ -57,6 +57,20 @@ def _confidence(value: float | None) -> float | None:
     return value
 
 
+def _reasons(value: Mapping[str, list[str]], name: str = "reasons") -> dict[str, list[str]]:
+    if not isinstance(value, Mapping) or not value:
+        raise ValueError(f"{name} must contain at least one reason category")
+    normalized: dict[str, list[str]] = {}
+    for key, reasons in value.items():
+        _required(str(key), f"{name} category")
+        if not isinstance(reasons, list) or not all(isinstance(item, str) for item in reasons):
+            raise TypeError(f"{name}[{key!r}] must be a list of strings")
+        normalized[str(key)] = list(reasons)
+    if not any(reason.strip() for items in normalized.values() for reason in items):
+        raise ValueError(f"{name} must contain at least one reason (non-empty)")
+    return normalized
+
+
 class SourceType(StrEnum):
     WEB = "web"
     PAPER = "paper"
@@ -99,12 +113,37 @@ class ContradictionStatus(StrEnum):
 
 
 class ResolvedClaimStatus(StrEnum):
-    UNRESOLVED = "unresolved"
     RESOLVED = "resolved"
+    UNRESOLVED = "unresolved"
     CONFLICTING = "conflicting"
+    INSUFFICIENT_EVIDENCE = "insufficient_evidence"
+    HISTORICAL_CHANGE = "historical_change"
+    # Deprecated values remain readable for Phase 0 rows. Phase 1 writers must
+    # use only the five canonical statuses above.
     PARTIALLY_SUPPORTED = "partially_supported"
     SUPERSEDED = "superseded"
     INVALID = "invalid"
+
+
+class ResolutionInputRole(StrEnum):
+    SUPPORTING = "supporting"
+    CONTRADICTING = "contradicting"
+    QUALIFYING = "qualifying"
+    REJECTED = "rejected"
+
+
+class SourceDependencyRelation(StrEnum):
+    REPOST_OF = "repost_of"
+    MIRROR_OF = "mirror_of"
+    DERIVED_FROM = "derived_from"
+    CITES = "cites"
+    SHARED_ORIGIN = "shared_origin"
+    POSSIBLY_DEPENDENT = "possibly_dependent"
+
+
+class KnowledgeAtomStatus(StrEnum):
+    ACTIVE = "active"
+    WITHHELD = "withheld"
 
 
 class PipelineRunStatus(StrEnum):
@@ -212,10 +251,19 @@ class ClaimGroup:
     name: str | None = None
     created_at: datetime = field(default_factory=utc_now)
     created_by_stage_run_id: str | None = None
+    canonical_statement: str | None = None
+    subject: str | None = None
+    predicate: str | None = None
+    qualifiers: dict[str, Any] = field(default_factory=dict)
+    temporal_scope: str | None = None
 
     def __post_init__(self) -> None:
         _required(self.id, "id")
         _required(self.canonical_key, "canonical_key")
+        canonical_statement = self.canonical_statement or self.name or self.canonical_key
+        _required(canonical_statement, "canonical_statement")
+        object.__setattr__(self, "canonical_statement", canonical_statement)
+        object.__setattr__(self, "qualifiers", _mapping(self.qualifiers, "qualifiers"))
         object.__setattr__(self, "created_at", _utc(self.created_at, "created_at"))
 
 
@@ -279,6 +327,8 @@ class ResolvedClaim:
     validity: str | None = None
     created_at: datetime = field(default_factory=utc_now)
     created_by_stage_run_id: str | None = None
+    resolution_decision_id: str | None = None
+    confidence_assessment_id: str | None = None
 
     def __post_init__(self) -> None:
         _required(self.id, "id")
@@ -290,6 +340,142 @@ class ResolvedClaim:
 
 
 @dataclass(frozen=True, slots=True)
+class ResolutionDecision:
+    id: str = field(default_factory=_id)
+    claim_group_id: str = ""
+    canonical_statement: str = ""
+    status: ResolvedClaimStatus = ResolvedClaimStatus.UNRESOLVED
+    resolution_reason: str = ""
+    validity: str | None = None
+    created_at: datetime = field(default_factory=utc_now)
+    created_by_stage_run_id: str | None = None
+
+    def __post_init__(self) -> None:
+        _required(self.id, "id")
+        _required(self.claim_group_id, "claim_group_id")
+        _required(self.canonical_statement, "canonical_statement")
+        _required(self.resolution_reason, "resolution_reason")
+        status = _enum(self.status, ResolvedClaimStatus, "status")
+        if status.value not in {
+            ResolvedClaimStatus.RESOLVED.value,
+            ResolvedClaimStatus.UNRESOLVED.value,
+            ResolvedClaimStatus.CONFLICTING.value,
+            ResolvedClaimStatus.INSUFFICIENT_EVIDENCE.value,
+            ResolvedClaimStatus.HISTORICAL_CHANGE.value,
+        }:
+            raise ValueError("ResolutionDecision status must use a canonical Phase 1 value")
+        object.__setattr__(self, "status", status)
+        object.__setattr__(self, "created_at", _utc(self.created_at, "created_at"))
+
+
+@dataclass(frozen=True, slots=True)
+class ResolutionClaimInput:
+    id: str = field(default_factory=_id)
+    resolution_decision_id: str = ""
+    claim_id: str = ""
+    role: ResolutionInputRole = ResolutionInputRole.SUPPORTING
+    reason: str | None = None
+    created_at: datetime = field(default_factory=utc_now)
+    created_by_stage_run_id: str | None = None
+
+    def __post_init__(self) -> None:
+        _required(self.id, "id")
+        _required(self.resolution_decision_id, "resolution_decision_id")
+        _required(self.claim_id, "claim_id")
+        object.__setattr__(self, "role", _enum(self.role, ResolutionInputRole, "role"))
+        object.__setattr__(self, "created_at", _utc(self.created_at, "created_at"))
+
+
+@dataclass(frozen=True, slots=True)
+class ResolutionEvidenceInput:
+    id: str = field(default_factory=_id)
+    resolution_decision_id: str = ""
+    evidence_id: str = ""
+    role: ResolutionInputRole = ResolutionInputRole.SUPPORTING
+    reason: str | None = None
+    created_at: datetime = field(default_factory=utc_now)
+    created_by_stage_run_id: str | None = None
+
+    def __post_init__(self) -> None:
+        _required(self.id, "id")
+        _required(self.resolution_decision_id, "resolution_decision_id")
+        _required(self.evidence_id, "evidence_id")
+        object.__setattr__(self, "role", _enum(self.role, ResolutionInputRole, "role"))
+        object.__setattr__(self, "created_at", _utc(self.created_at, "created_at"))
+
+
+@dataclass(frozen=True, slots=True)
+class ConfidenceAssessment:
+    id: str = field(default_factory=_id)
+    resolution_decision_id: str = ""
+    policy_version: str = ""
+    source_quality: float = 0.0
+    evidence_directness: float = 0.0
+    source_independence: float = 0.0
+    agreement: float = 0.0
+    freshness: float = 0.0
+    extraction_confidence: float = 0.0
+    contradiction_penalty: float = 0.0
+    publish_cap: float | None = None
+    evidence_floor_met: bool = False
+    score: float = 0.0
+    reasons: dict[str, list[str]] = field(default_factory=dict)
+    created_at: datetime = field(default_factory=utc_now)
+    created_by_stage_run_id: str | None = None
+
+    def __post_init__(self) -> None:
+        _required(self.id, "id")
+        _required(self.resolution_decision_id, "resolution_decision_id")
+        _required(self.policy_version, "policy_version")
+        for name in (
+            "source_quality",
+            "evidence_directness",
+            "source_independence",
+            "agreement",
+            "freshness",
+            "extraction_confidence",
+            "contradiction_penalty",
+            "score",
+        ):
+            value = getattr(self, name)
+            if not 0.0 <= value <= 1.0:
+                raise ValueError(f"{name} must be between 0 and 1")
+        _confidence(self.publish_cap)
+        object.__setattr__(self, "reasons", _reasons(self.reasons))
+        object.__setattr__(self, "created_at", _utc(self.created_at, "created_at"))
+
+
+@dataclass(frozen=True, slots=True)
+class SourceDependency:
+    id: str = field(default_factory=_id)
+    source_id: str = ""
+    parent_source_id: str = ""
+    relation_type: SourceDependencyRelation = SourceDependencyRelation.POSSIBLY_DEPENDENT
+    dependency_group: str | None = None
+    independence_score: float | None = None
+    reason: str | None = None
+    signals: dict[str, Any] = field(default_factory=dict)
+    created_at: datetime | None = field(default_factory=utc_now)
+    created_by_stage_run_id: str | None = None
+
+    def __post_init__(self) -> None:
+        _required(self.id, "id")
+        _required(self.source_id, "source_id")
+        _required(self.parent_source_id, "parent_source_id")
+        if self.source_id == self.parent_source_id:
+            raise ValueError("a source dependency cannot refer to itself")
+        object.__setattr__(
+            self,
+            "relation_type",
+            _enum(self.relation_type, SourceDependencyRelation, "relation_type"),
+        )
+        _confidence(self.independence_score)
+        object.__setattr__(self, "signals", _mapping(self.signals, "signals"))
+        if self.created_at is not None:
+            object.__setattr__(self, "created_at", _utc(self.created_at, "created_at"))
+
+
+@dataclass(frozen=True, slots=True)
 class KnowledgeAtom:
     id: str = field(default_factory=_id)
     resolved_claim_id: str = ""
@@ -298,12 +484,18 @@ class KnowledgeAtom:
     qualifiers: dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=utc_now)
     created_by_stage_run_id: str | None = None
+    subject: str | None = None
+    predicate: str | None = None
+    object: str | None = None
+    status: KnowledgeAtomStatus = KnowledgeAtomStatus.WITHHELD
+    validity: str | None = None
 
     def __post_init__(self) -> None:
         _required(self.id, "id")
         _required(self.resolved_claim_id, "resolved_claim_id")
         _required(self.statement, "statement")
         _confidence(self.confidence)
+        object.__setattr__(self, "status", _enum(self.status, KnowledgeAtomStatus, "status"))
         object.__setattr__(self, "qualifiers", _mapping(self.qualifiers, "qualifiers"))
         object.__setattr__(self, "created_at", _utc(self.created_at, "created_at"))
 

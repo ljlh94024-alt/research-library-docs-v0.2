@@ -18,6 +18,7 @@ from research_library.config import get_settings
 from research_library.domain import (
     Claim,
     ClaimGroup,
+    ConfidenceAssessment,
     Contradiction,
     ContradictionSeverity,
     ContradictionStatus,
@@ -26,11 +27,18 @@ from research_library.domain import (
     EvidenceLink,
     EvidenceLinkType,
     KnowledgeAtom,
+    KnowledgeAtomStatus,
     PipelineRun,
     PipelineRunStatus,
+    ResolutionClaimInput,
+    ResolutionDecision,
+    ResolutionEvidenceInput,
+    ResolutionInputRole,
     ResolvedClaim,
     ResolvedClaimStatus,
     Source,
+    SourceDependency,
+    SourceDependencyRelation,
     SourceSnapshot,
     SourceType,
     StageRun,
@@ -49,12 +57,17 @@ from .schema import (
     claim_group_members,
     claim_groups,
     claims,
+    confidence_assessments,
     contradictions,
     evidence,
     evidence_links,
     knowledge_atoms,
     pipeline_runs,
+    resolution_claim_inputs,
+    resolution_decisions,
+    resolution_evidence_inputs,
     resolved_claims,
+    source_dependencies,
     source_snapshots,
     sources,
     stage_runs,
@@ -165,7 +178,7 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
         for key in keys:
             expected = values[key]
             actual = existing[key]
-            if key in {"metadata", "qualifiers"}:
+            if key in {"metadata", "qualifiers", "signals", "reasons"}:
                 if _from_json(actual) != (expected or {}):
                     return False
             elif actual != expected:
@@ -473,6 +486,11 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
             "id": item.id,
             "canonical_key": item.canonical_key,
             "name": item.name,
+            "canonical_statement": item.canonical_statement,
+            "subject": item.subject,
+            "predicate": item.predicate,
+            "qualifiers": item.qualifiers,
+            "temporal_scope": item.temporal_scope,
             "created_at": _iso(item.created_at),
             "created_by_stage_run_id": item.created_by_stage_run_id,
         }
@@ -492,6 +510,11 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
             id=row["id"],
             canonical_key=row["canonical_key"],
             name=row["name"],
+            canonical_statement=row["canonical_statement"],
+            subject=row["subject"],
+            predicate=row["predicate"],
+            qualifiers=_from_json(row["qualifiers"]),
+            temporal_scope=row["temporal_scope"],
             created_at=_dt(row["created_at"]),
             created_by_stage_run_id=row["created_by_stage_run_id"],
         )
@@ -582,6 +605,62 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
             ).all()
         return tuple(link for row in rows if (link := self.get_evidence_link(row[0])) is not None)
 
+    def save_source_dependency(self, item: SourceDependency) -> SourceDependency:
+        if item.created_at is None:
+            raise StorageIntegrityError("new SourceDependency writes require created_at")
+        values = {
+            "id": item.id,
+            "source_id": item.source_id,
+            "parent_source_id": item.parent_source_id,
+            "relation_type": item.relation_type.value,
+            "dependency_group": item.dependency_group,
+            "independence_score": item.independence_score,
+            "reason": item.reason,
+            "signals": item.signals,
+            "created_at": _iso(item.created_at),
+            "created_by_stage_run_id": item.created_by_stage_run_id,
+        }
+        with self.engine.begin() as connection:
+            self._insert_immutable(connection, source_dependencies, values, "SourceDependency")
+        persisted = self.get_source_dependency(item.id)
+        if persisted is None:
+            raise StorageIntegrityError(f"source dependency disappeared after save: {item.id}")
+        return persisted
+
+    def get_source_dependency(self, dependency_id: str) -> SourceDependency | None:
+        with self.engine.connect() as connection:
+            row = self._row(connection, source_dependencies, dependency_id)
+        if not row:
+            return None
+        return SourceDependency(
+            id=row["id"],
+            source_id=row["source_id"],
+            parent_source_id=row["parent_source_id"],
+            relation_type=SourceDependencyRelation(row["relation_type"]),
+            dependency_group=row["dependency_group"],
+            independence_score=_float(row["independence_score"]),
+            reason=row["reason"],
+            signals=_from_json(row["signals"]),
+            created_at=_dt(row["created_at"]),
+            created_by_stage_run_id=row["created_by_stage_run_id"],
+        )
+
+    def list_source_dependencies(
+        self, source_id: str | None = None
+    ) -> tuple[SourceDependency, ...]:
+        statement = select(source_dependencies.c.id).order_by(
+            source_dependencies.c.created_at, source_dependencies.c.id
+        )
+        if source_id is not None:
+            statement = statement.where(source_dependencies.c.source_id == source_id)
+        with self.engine.connect() as connection:
+            rows = connection.execute(statement).all()
+        return tuple(
+            item
+            for row in rows
+            if (item := self.get_source_dependency(row[0])) is not None
+        )
+
     def save_contradiction(self, item: Contradiction) -> Contradiction:
         values = {
             "id": item.id,
@@ -639,6 +718,49 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
             created_by_stage_run_id=row["created_by_stage_run_id"],
         )
 
+    @staticmethod
+    def _validate_resolved_claim_links(connection: Any, item: ResolvedClaim) -> None:
+        has_decision = item.resolution_decision_id is not None
+        has_assessment = item.confidence_assessment_id is not None
+        if has_decision != has_assessment:
+            raise StorageIntegrityError(
+                "Phase 1 ResolvedClaim must link both a ResolutionDecision and "
+                "ConfidenceAssessment"
+            )
+        if not has_decision:
+            return
+
+        decision = connection.execute(
+            select(resolution_decisions).where(
+                resolution_decisions.c.id == item.resolution_decision_id
+            )
+        ).mappings().first()
+        assessment = connection.execute(
+            select(confidence_assessments).where(
+                confidence_assessments.c.id == item.confidence_assessment_id
+            )
+        ).mappings().first()
+        if decision is None:
+            raise StorageIntegrityError(
+                f"resolution decision does not exist: {item.resolution_decision_id}"
+            )
+        if assessment is None:
+            raise StorageIntegrityError(
+                f"confidence assessment does not exist: {item.confidence_assessment_id}"
+            )
+        if assessment["resolution_decision_id"] != decision["id"]:
+            raise StorageIntegrityError("confidence assessment belongs to another decision")
+        if item.claim_group_id != decision["claim_group_id"]:
+            raise StorageIntegrityError("resolved claim group does not match its decision")
+        if item.status.value != decision["status"]:
+            raise StorageIntegrityError("resolved claim status does not match its decision")
+        if item.canonical_statement != decision["canonical_statement"]:
+            raise StorageIntegrityError(
+                "resolved claim canonical_statement does not match its decision"
+            )
+        if item.confidence != assessment["score"]:
+            raise StorageIntegrityError("resolved claim confidence does not match its assessment")
+
     def save_resolved_claim(self, item: ResolvedClaim) -> ResolvedClaim:
         values = {
             "id": item.id,
@@ -648,10 +770,13 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
             "confidence": item.confidence,
             "resolution_reason": item.resolution_reason,
             "validity": item.validity,
+            "resolution_decision_id": item.resolution_decision_id,
+            "confidence_assessment_id": item.confidence_assessment_id,
             "created_at": _iso(item.created_at),
             "created_by_stage_run_id": item.created_by_stage_run_id,
         }
         with self.engine.begin() as connection:
+            self._validate_resolved_claim_links(connection, item)
             self._insert_immutable(connection, resolved_claims, values, "ResolvedClaim")
         persisted = self.get_resolved_claim(item.id)
         if persisted is None:
@@ -671,21 +796,317 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
             confidence=_float(row["confidence"]),
             resolution_reason=row["resolution_reason"],
             validity=row["validity"],
+            resolution_decision_id=row["resolution_decision_id"],
+            confidence_assessment_id=row["confidence_assessment_id"],
             created_at=_dt(row["created_at"]),
             created_by_stage_run_id=row["created_by_stage_run_id"],
         )
+
+    def save_resolution_decision(self, item: ResolutionDecision) -> ResolutionDecision:
+        values = {
+            "id": item.id,
+            "claim_group_id": item.claim_group_id,
+            "canonical_statement": item.canonical_statement,
+            "status": item.status.value,
+            "resolution_reason": item.resolution_reason,
+            "validity": item.validity,
+            "created_at": _iso(item.created_at),
+            "created_by_stage_run_id": item.created_by_stage_run_id,
+        }
+        with self.engine.begin() as connection:
+            self._insert_immutable(connection, resolution_decisions, values, "ResolutionDecision")
+        persisted = self.get_resolution_decision(item.id)
+        if persisted is None:
+            raise StorageIntegrityError(f"resolution decision disappeared after save: {item.id}")
+        return persisted
+
+    def get_resolution_decision(self, decision_id: str) -> ResolutionDecision | None:
+        with self.engine.connect() as connection:
+            row = self._row(connection, resolution_decisions, decision_id)
+        if not row:
+            return None
+        return ResolutionDecision(
+            id=row["id"],
+            claim_group_id=row["claim_group_id"],
+            canonical_statement=row["canonical_statement"],
+            status=ResolvedClaimStatus(row["status"]),
+            resolution_reason=row["resolution_reason"],
+            validity=row["validity"],
+            created_at=_dt(row["created_at"]),
+            created_by_stage_run_id=row["created_by_stage_run_id"],
+        )
+
+    def list_resolution_decisions_for_group(
+        self, claim_group_id: str
+    ) -> tuple[ResolutionDecision, ...]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(resolution_decisions.c.id)
+                .where(resolution_decisions.c.claim_group_id == claim_group_id)
+                .order_by(resolution_decisions.c.created_at, resolution_decisions.c.id)
+            ).all()
+        return tuple(
+            item
+            for row in rows
+            if (item := self.get_resolution_decision(row[0])) is not None
+        )
+
+    def save_resolution_claim_input(self, item: ResolutionClaimInput) -> ResolutionClaimInput:
+        values = {
+            "id": item.id,
+            "resolution_decision_id": item.resolution_decision_id,
+            "claim_id": item.claim_id,
+            "role": item.role.value,
+            "reason": item.reason,
+            "created_at": _iso(item.created_at),
+            "created_by_stage_run_id": item.created_by_stage_run_id,
+        }
+        with self.engine.begin() as connection:
+            decision = connection.execute(
+                select(resolution_decisions).where(
+                    resolution_decisions.c.id == item.resolution_decision_id
+                )
+            ).mappings().first()
+            if decision is None:
+                raise StorageIntegrityError(
+                    f"resolution decision does not exist: {item.resolution_decision_id}"
+                )
+            if connection.execute(
+                select(claims.c.id).where(claims.c.id == item.claim_id)
+            ).scalar_one_or_none() is None:
+                raise StorageIntegrityError(f"claim does not exist: {item.claim_id}")
+            member = connection.execute(
+                select(claim_group_members).where(
+                    claim_group_members.c.claim_group_id == decision["claim_group_id"],
+                    claim_group_members.c.claim_id == item.claim_id,
+                )
+            ).first()
+            if member is None:
+                raise StorageIntegrityError(
+                    "resolution claim input claim does not belong to decision claim group"
+                )
+            self._insert_immutable(
+                connection, resolution_claim_inputs, values, "ResolutionClaimInput"
+            )
+        persisted = self._get_resolution_claim_input(item.id)
+        if persisted is None:
+            raise StorageIntegrityError(f"resolution claim input disappeared after save: {item.id}")
+        return persisted
+
+    def _get_resolution_claim_input(self, input_id: str) -> ResolutionClaimInput | None:
+        with self.engine.connect() as connection:
+            row = self._row(connection, resolution_claim_inputs, input_id)
+        if not row:
+            return None
+        return ResolutionClaimInput(
+            id=row["id"],
+            resolution_decision_id=row["resolution_decision_id"],
+            claim_id=row["claim_id"],
+            role=ResolutionInputRole(row["role"]),
+            reason=row["reason"],
+            created_at=_dt(row["created_at"]),
+            created_by_stage_run_id=row["created_by_stage_run_id"],
+        )
+
+    def list_resolution_claim_inputs(
+        self, resolution_decision_id: str
+    ) -> tuple[ResolutionClaimInput, ...]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(resolution_claim_inputs.c.id)
+                .where(
+                    resolution_claim_inputs.c.resolution_decision_id
+                    == resolution_decision_id
+                )
+                .order_by(resolution_claim_inputs.c.created_at, resolution_claim_inputs.c.id)
+            ).all()
+        items = tuple(self._get_resolution_claim_input(row[0]) for row in rows)
+        if any(item is None for item in items):
+            raise StorageIntegrityError("resolution claim input row is unreadable")
+        return tuple(item for item in items if item is not None)
+
+    def save_resolution_evidence_input(
+        self, item: ResolutionEvidenceInput
+    ) -> ResolutionEvidenceInput:
+        values = {
+            "id": item.id,
+            "resolution_decision_id": item.resolution_decision_id,
+            "evidence_id": item.evidence_id,
+            "role": item.role.value,
+            "reason": item.reason,
+            "created_at": _iso(item.created_at),
+            "created_by_stage_run_id": item.created_by_stage_run_id,
+        }
+        with self.engine.begin() as connection:
+            if connection.execute(
+                select(resolution_decisions.c.id).where(
+                    resolution_decisions.c.id == item.resolution_decision_id
+                )
+            ).scalar_one_or_none() is None:
+                raise StorageIntegrityError(
+                    f"resolution decision does not exist: {item.resolution_decision_id}"
+                )
+            if connection.execute(
+                select(evidence.c.id).where(evidence.c.id == item.evidence_id)
+            ).scalar_one_or_none() is None:
+                raise StorageIntegrityError(f"evidence does not exist: {item.evidence_id}")
+            self._insert_immutable(
+                connection, resolution_evidence_inputs, values, "ResolutionEvidenceInput"
+            )
+        persisted = self._get_resolution_evidence_input(item.id)
+        if persisted is None:
+            raise StorageIntegrityError(
+                f"resolution evidence input disappeared after save: {item.id}"
+            )
+        return persisted
+
+    def _get_resolution_evidence_input(self, input_id: str) -> ResolutionEvidenceInput | None:
+        with self.engine.connect() as connection:
+            row = self._row(connection, resolution_evidence_inputs, input_id)
+        if not row:
+            return None
+        return ResolutionEvidenceInput(
+            id=row["id"],
+            resolution_decision_id=row["resolution_decision_id"],
+            evidence_id=row["evidence_id"],
+            role=ResolutionInputRole(row["role"]),
+            reason=row["reason"],
+            created_at=_dt(row["created_at"]),
+            created_by_stage_run_id=row["created_by_stage_run_id"],
+        )
+
+    def list_resolution_evidence_inputs(
+        self, resolution_decision_id: str
+    ) -> tuple[ResolutionEvidenceInput, ...]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(resolution_evidence_inputs.c.id)
+                .where(
+                    resolution_evidence_inputs.c.resolution_decision_id
+                    == resolution_decision_id
+                )
+                .order_by(resolution_evidence_inputs.c.created_at, resolution_evidence_inputs.c.id)
+            ).all()
+        items = tuple(self._get_resolution_evidence_input(row[0]) for row in rows)
+        if any(item is None for item in items):
+            raise StorageIntegrityError("resolution evidence input row is unreadable")
+        return tuple(item for item in items if item is not None)
+
+    def save_confidence_assessment(
+        self, item: ConfidenceAssessment
+    ) -> ConfidenceAssessment:
+        values = {
+            "id": item.id,
+            "resolution_decision_id": item.resolution_decision_id,
+            "policy_version": item.policy_version,
+            "source_quality": item.source_quality,
+            "evidence_directness": item.evidence_directness,
+            "source_independence": item.source_independence,
+            "agreement": item.agreement,
+            "freshness": item.freshness,
+            "extraction_confidence": item.extraction_confidence,
+            "contradiction_penalty": item.contradiction_penalty,
+            "publish_cap": item.publish_cap,
+            "evidence_floor_met": item.evidence_floor_met,
+            "score": item.score,
+            "reasons": item.reasons,
+            "created_at": _iso(item.created_at),
+            "created_by_stage_run_id": item.created_by_stage_run_id,
+        }
+        with self.engine.begin() as connection:
+            if connection.execute(
+                select(resolution_decisions.c.id).where(
+                    resolution_decisions.c.id == item.resolution_decision_id
+                )
+            ).scalar_one_or_none() is None:
+                raise StorageIntegrityError(
+                    f"resolution decision does not exist: {item.resolution_decision_id}"
+                )
+            self._insert_immutable(
+                connection, confidence_assessments, values, "ConfidenceAssessment"
+            )
+        persisted = self.get_confidence_assessment(item.id)
+        if persisted is None:
+            raise StorageIntegrityError(f"confidence assessment disappeared after save: {item.id}")
+        return persisted
+
+    def get_confidence_assessment(self, assessment_id: str) -> ConfidenceAssessment | None:
+        with self.engine.connect() as connection:
+            row = self._row(connection, confidence_assessments, assessment_id)
+        if not row:
+            return None
+        return ConfidenceAssessment(
+            id=row["id"],
+            resolution_decision_id=row["resolution_decision_id"],
+            policy_version=row["policy_version"],
+            source_quality=_float(row["source_quality"]),
+            evidence_directness=_float(row["evidence_directness"]),
+            source_independence=_float(row["source_independence"]),
+            agreement=_float(row["agreement"]),
+            freshness=_float(row["freshness"]),
+            extraction_confidence=_float(row["extraction_confidence"]),
+            contradiction_penalty=_float(row["contradiction_penalty"]),
+            publish_cap=_float(row["publish_cap"]),
+            evidence_floor_met=bool(row["evidence_floor_met"]),
+            score=_float(row["score"]),
+            reasons=_from_json(row["reasons"]),
+            created_at=_dt(row["created_at"]),
+            created_by_stage_run_id=row["created_by_stage_run_id"],
+        )
+
+    def list_confidence_assessments_for_decision(
+        self, resolution_decision_id: str
+    ) -> tuple[ConfidenceAssessment, ...]:
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(confidence_assessments.c.id)
+                .where(
+                    confidence_assessments.c.resolution_decision_id
+                    == resolution_decision_id
+                )
+                .order_by(confidence_assessments.c.created_at, confidence_assessments.c.id)
+            ).all()
+        return tuple(
+            item
+            for row in rows
+            if (item := self.get_confidence_assessment(row[0])) is not None
+        )
+
+    @staticmethod
+    def _validate_knowledge_atom_semantics(connection: Any, item: KnowledgeAtom) -> None:
+        if item.status is not KnowledgeAtomStatus.ACTIVE:
+            return
+        resolved = connection.execute(
+            select(resolved_claims).where(resolved_claims.c.id == item.resolved_claim_id)
+        ).mappings().first()
+        if resolved is None:
+            raise StorageIntegrityError(f"resolved claim does not exist: {item.resolved_claim_id}")
+        if resolved["status"] != ResolvedClaimStatus.RESOLVED.value:
+            raise StorageIntegrityError("ACTIVE KnowledgeAtom requires a resolved claim")
+        if item.confidence is None or resolved["confidence"] is None:
+            raise StorageIntegrityError("ACTIVE KnowledgeAtom requires non-null confidence")
+        if item.confidence != resolved["confidence"]:
+            raise StorageIntegrityError(
+                "ACTIVE KnowledgeAtom confidence must match its resolved claim"
+            )
 
     def save_knowledge_atom(self, item: KnowledgeAtom) -> KnowledgeAtom:
         values = {
             "id": item.id,
             "resolved_claim_id": item.resolved_claim_id,
+            "subject": item.subject,
+            "predicate": item.predicate,
+            "object": item.object,
             "statement": item.statement,
             "confidence": item.confidence,
+            "status": item.status.value,
+            "validity": item.validity,
             "qualifiers": item.qualifiers,
             "created_at": _iso(item.created_at),
             "created_by_stage_run_id": item.created_by_stage_run_id,
         }
         with self.engine.begin() as connection:
+            self._validate_knowledge_atom_semantics(connection, item)
             self._insert_immutable(connection, knowledge_atoms, values, "KnowledgeAtom")
         persisted = self.get_knowledge_atom(item.id)
         if persisted is None:
@@ -700,8 +1121,13 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
         return KnowledgeAtom(
             id=row["id"],
             resolved_claim_id=row["resolved_claim_id"],
+            subject=row["subject"],
+            predicate=row["predicate"],
+            object=row["object"],
             statement=row["statement"],
             confidence=_float(row["confidence"]),
+            status=KnowledgeAtomStatus(row["status"]),
+            validity=row["validity"],
             qualifiers=_from_json(row["qualifiers"]),
             created_at=_dt(row["created_at"]),
             created_by_stage_run_id=row["created_by_stage_run_id"],
@@ -714,10 +1140,53 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
         resolved = self.get_resolved_claim(atom.resolved_claim_id)
         if resolved is None:
             raise ValueError(f"knowledge atom has no resolved claim: {atom_id}")
+        resolution_decision = None
+        resolution_claim_inputs = ()
+        resolution_evidence_inputs = ()
+        confidence_assessment = None
+        if (resolved.resolution_decision_id is None) != (
+            resolved.confidence_assessment_id is None
+        ):
+            raise StorageIntegrityError(
+                f"resolved claim has a partial Phase 1 link set: {resolved.id}"
+            )
+        if resolved.resolution_decision_id is not None:
+            if resolved.confidence_assessment_id is None:
+                raise StorageIntegrityError(
+                    f"resolved claim has a decision but no confidence assessment: {resolved.id}"
+                )
+            resolution_decision = self.get_resolution_decision(resolved.resolution_decision_id)
+            confidence_assessment = self.get_confidence_assessment(
+                resolved.confidence_assessment_id
+            )
+            if resolution_decision is None:
+                raise StorageIntegrityError(
+                    f"resolved claim references missing decision: {resolved.resolution_decision_id}"
+                )
+            if confidence_assessment is None:
+                raise StorageIntegrityError(
+                    "resolved claim references missing confidence assessment: "
+                    f"{resolved.confidence_assessment_id}"
+                )
+            resolution_claim_inputs = self.list_resolution_claim_inputs(resolution_decision.id)
+            resolution_evidence_inputs = self.list_resolution_evidence_inputs(
+                resolution_decision.id
+            )
         group = self.get_claim_group(resolved.claim_group_id)
         if group is None:
             raise ValueError(f"resolved claim has no claim group: {resolved.id}")
         claim_items = self.list_claims_for_group(group.id)
+        candidate_claim_ids = {item.id for item in claim_items}
+        for item_input in resolution_claim_inputs:
+            claim = self.get_claim(item_input.claim_id)
+            if claim is None:
+                raise StorageIntegrityError(
+                    f"resolution claim input references missing claim: {item_input.claim_id}"
+                )
+            if claim.id not in candidate_claim_ids:
+                raise StorageIntegrityError(
+                    "resolution claim input claim is outside the decision claim group"
+                )
         links: list[EvidenceLink] = []
         for claim in claim_items:
             links.extend(self.list_evidence_links_for_claim(claim.id))
@@ -725,6 +1194,15 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
         for link in links:
             item = self.get_evidence(link.evidence_id)
             if item is not None and item.id not in {existing.id for existing in evidence_items}:
+                evidence_items.append(item)
+        for item_input in resolution_evidence_inputs:
+            item = self.get_evidence(item_input.evidence_id)
+            if item is None:
+                raise StorageIntegrityError(
+                    "resolution evidence input references missing evidence: "
+                    f"{item_input.evidence_id}"
+                )
+            if item.id not in {existing.id for existing in evidence_items}:
                 evidence_items.append(item)
         snapshots: list[SourceSnapshot] = []
         for item in evidence_items:
@@ -747,6 +1225,10 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
             evidences=tuple(evidence_items),
             snapshots=tuple(snapshots),
             sources=tuple(source_items),
+            resolution_decision=resolution_decision,
+            resolution_claim_inputs=resolution_claim_inputs,
+            resolution_evidence_inputs=resolution_evidence_inputs,
+            confidence_assessment=confidence_assessment,
         )
 
     def get_processing_provenance(self, atom_id: str) -> ProcessingProvenance:
@@ -772,6 +1254,30 @@ class SQLiteRepository(AbstractContextManager["SQLiteRepository"]):
         entities.append(
             ("claim_group", chain.claim_group.id, chain.claim_group.created_by_stage_run_id)
         )
+        if chain.resolution_decision is not None:
+            entities.append(
+                (
+                    "resolution_decision",
+                    chain.resolution_decision.id,
+                    chain.resolution_decision.created_by_stage_run_id,
+                )
+            )
+            entities.extend(
+                ("resolution_claim_input", item.id, item.created_by_stage_run_id)
+                for item in chain.resolution_claim_inputs
+            )
+            entities.extend(
+                ("resolution_evidence_input", item.id, item.created_by_stage_run_id)
+                for item in chain.resolution_evidence_inputs
+            )
+            if chain.confidence_assessment is not None:
+                entities.append(
+                    (
+                        "confidence_assessment",
+                        chain.confidence_assessment.id,
+                        chain.confidence_assessment.created_by_stage_run_id,
+                    )
+                )
         entities.append(
             (
                 "resolved_claim",
