@@ -19,9 +19,9 @@ expectations:
 | Fixture | Expected outcome |
 | --- | --- |
 | `independent_support` | Two independent sources produce high agreement and a publishable result. |
-| `multi_repost_same_origin` | Ten URLs collapse to an effective independence count of one. |
+| `multi_repost_same_origin` | Ten URLs collapse to one effective unit, fail the evidence floor, and produce a `WITHHELD` atom. |
 | `direct_conflict` | An open contradiction produces `CONFLICTING` resolution and a `WITHHELD` atom. |
-| `qualified_support` | `QUALIFIES` remains conditional and never becomes unconditional `SUPPORTS`. |
+| `qualified_support` | `QUALIFIES` remains qualifying-only, resolves to `INSUFFICIENT_EVIDENCE`, and produces a `WITHHELD` atom. |
 | `snapshot_history` | Old snapshots/results remain readable after a later run. |
 
 The implementation uses `FixtureSemanticBackend`, stable artifact IDs,

@@ -45,8 +45,22 @@ from .fixtures import (
     get_golden_fixture,
     golden_fixtures,
 )
-from .manifests import StageManifest, canonical_json, stable_artifact_id
+from .manifests import (
+    ManifestIntegrityError,
+    StageManifest,
+    StageManifestStore,
+    canonical_json,
+    stable_artifact_id,
+)
 from .pipeline import PipelineRunner
+from .semantic import (
+    ClaimCandidate,
+    DependencySignal,
+    EvidenceCandidate,
+    EvidenceRelationCandidate,
+    SemanticBackend,
+    SemanticBatch,
+)
 
 __all__ = [
     "CANONICAL_STAGE_NAMES",
@@ -72,6 +86,7 @@ __all__ = [
     "RefineryStage",
     "StageContext",
     "AtomPolicy",
+    "ClaimCandidate",
     "ConfidencePolicy",
     "ContradictionPolicy",
     "DETERMINISTIC_PIPELINE_VERSION",
@@ -84,10 +99,17 @@ __all__ = [
     "FixtureSnapshotSpec",
     "FixtureSourceSpec",
     "GOLDEN_FIXTURE_IDS",
+    "DependencySignal",
+    "EvidenceCandidate",
+    "EvidenceRelationCandidate",
     "IndependencePolicy",
+    "ManifestIntegrityError",
     "NormalizationPolicy",
     "ResolutionPolicy",
+    "SemanticBackend",
+    "SemanticBatch",
     "StageManifest",
+    "StageManifestStore",
     "canonical_json",
     "get_golden_fixture",
     "golden_fixtures",

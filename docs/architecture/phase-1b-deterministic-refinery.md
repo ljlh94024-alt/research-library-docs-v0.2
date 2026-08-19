@@ -7,24 +7,26 @@ evidence_extract -> claim_extract -> normalize -> evidence_link
 -> independence -> contradiction -> resolve -> confidence -> atom_build
 ```
 
-`FixtureSemanticBackend` is the only semantic input boundary in this phase.
-It serves the five frozen golden fixtures without network, API, LLM, embedding,
-or vector-store access. `DeterministicRefinery` persists every formal domain
-object through the existing Phase 1A repository and supplies the canonical
-stage owner for each output.
+`SemanticBackend` is the provider-neutral semantic input boundary in this
+phase. `FixtureSemanticBackend` implements it for the five frozen golden
+fixtures without network, API, LLM, embedding, or vector-store access.
+`DeterministicRefinery` persists every formal domain object through the
+existing Phase 1A repository and supplies the canonical stage owner for each
+output.
 
-IDs are content-derived through `stable_artifact_id`. Stage outputs are
-described by immutable `StageManifest` values whose IDs are SHA-256 hashes of
-canonical JSON payloads. The pipeline and stage run IDs include fixture,
-pipeline version, and run key. A successful replay therefore produces the
-same artifact and manifest IDs while respecting the repository's terminal
-lifecycle rules.
+Input Source/Snapshot records are seeded before the PipelineRun. IDs for
+formal stage outputs are namespaced by their owning StageRun. Normal runs are
+append-only and receive new PipelineRun/StageRun/artifact IDs; an explicit
+recovery key enables deterministic retry of one run. Stage inputs and outputs
+are persisted in `StageManifestStore` as SHA-256-addressed canonical JSON and
+verified on read.
 
 The five golden fixtures cover independent agreement, shared-origin repost
-collapse, direct contradiction withholding, conditional qualification, and
-append-only snapshot history. Confidence reasons include effective source
-independence, evidence relation, agreement, extraction confidence, and any
-contradiction penalty. Atom publication requires a resolved decision and a
-met evidence floor; qualified evidence remains conditional.
+collapse with a false floor, direct contradiction withholding, QUALIFIES-only
+insufficient evidence, and two-run append-only snapshot history. Confidence
+reasons include effective source independence, evidence relation, agreement,
+deterministic freshness, extraction confidence, and contradiction penalty.
+Atom publication requires a resolved decision, a met evidence floor, and
+confidence at least 0.75; QUALIFIES-only evidence is withheld.
 
 Phase 1C is not part of this implementation.

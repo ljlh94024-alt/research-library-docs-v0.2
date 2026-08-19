@@ -77,7 +77,6 @@ class FixtureDefinition:
     evidences: tuple[FixtureEvidenceSpec, ...]
     claims: tuple[FixtureClaimSpec, ...]
     created_at: datetime = _FIXTURE_TIME
-    expected: MappingProxyType = field(default_factory=lambda: MappingProxyType({}))
     metadata: MappingProxyType = field(default_factory=lambda: MappingProxyType({}))
 
     def __post_init__(self) -> None:
@@ -85,7 +84,6 @@ class FixtureDefinition:
         object.__setattr__(self, "snapshots", _tuple(self.snapshots))
         object.__setattr__(self, "evidences", _tuple(self.evidences))
         object.__setattr__(self, "claims", _tuple(self.claims))
-        object.__setattr__(self, "expected", MappingProxyType(dict(self.expected)))
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
         for values, label in (
             (self.sources, "source"),
@@ -167,7 +165,6 @@ def golden_fixtures() -> tuple[FixtureDefinition, ...]:
                 ("evidence-b",),
             ),
         ),
-        expected={"effective_independence_count": 2, "status": "resolved", "atom_status": "active"},
     )
 
     repost_sources = [
@@ -235,7 +232,6 @@ def golden_fixtures() -> tuple[FixtureDefinition, ...]:
             ),
             *repost_claims,
         ),
-        expected={"effective_independence_count": 1, "status": "resolved", "atom_status": "active"},
     )
 
     conflict = FixtureDefinition(
@@ -274,7 +270,6 @@ def golden_fixtures() -> tuple[FixtureDefinition, ...]:
                 ("evidence-b",),
             ),
         ),
-        expected={"status": "conflicting", "atom_status": "withheld"},
     )
 
     qualified = FixtureDefinition(
@@ -309,7 +304,6 @@ def golden_fixtures() -> tuple[FixtureDefinition, ...]:
                 qualifiers={"condition": "archived_records"},
             ),
         ),
-        expected={"status": "resolved", "atom_status": "active", "validity": "conditional"},
     )
 
     history = FixtureDefinition(
@@ -364,7 +358,6 @@ def golden_fixtures() -> tuple[FixtureDefinition, ...]:
                 temporal_scope="2025",
             ),
         ),
-        expected={"snapshot_count": 2, "atom_count": 2, "history_preserved": True},
     )
     return (independent, repost, conflict, qualified, history)
 

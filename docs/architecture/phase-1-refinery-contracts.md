@@ -65,12 +65,13 @@ or `dependency_group`, independently or together.
 
 ## Phase 1B deterministic implementation
 
-`FixtureSemanticBackend` supplies five frozen golden fixtures entirely from
-local data. `DeterministicRefinery` executes the nine stages in the canonical
-order with stable pipeline, stage, and artifact IDs. Each stage records a
-content-addressed `StageManifest`; replaying the same fixture and pipeline
-version reuses the same IDs and terminal lifecycle records without creating a
-second history row.
+`SemanticBackend` is the provider-neutral boundary, implemented in Phase 1B
+by `FixtureSemanticBackend` using five frozen local fixtures.
+`DeterministicRefinery` executes the nine stages in canonical order. Formal
+stage outputs are namespaced by StageRun; normal invocations create new
+PipelineRun/StageRun history, while an explicit recovery key enables exact
+retry of one run. Each stage persists both input and output manifests in the
+content-addressed `StageManifestStore`.
 
 Phase 1B policies are explicit and versioned: normalization creates canonical
 claim groups, independence collapses shared-origin reposts, contradiction
