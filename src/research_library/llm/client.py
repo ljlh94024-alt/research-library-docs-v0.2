@@ -1,4 +1,4 @@
-"""Provider-neutral LLM types; no real provider is implemented in Phase 0."""
+"""Provider-neutral LLM types; Phase 1C remains offline and provider-neutral."""
 
 from __future__ import annotations
 
@@ -33,7 +33,21 @@ class LLMResponse:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "raw", dict(self.raw))
-        object.__setattr__(self, "usage", dict(self.usage))
+        usage = dict(self.usage)
+        normalized: dict[str, int] = {}
+        for key in ("input_tokens", "output_tokens", "total_tokens"):
+            if key not in usage or usage[key] is None:
+                continue
+            value = usage[key]
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{key} must be a non-negative integer")
+            normalized[key] = value
+        if (
+            "total_tokens" not in normalized
+            and {"input_tokens", "output_tokens"} <= normalized.keys()
+        ):
+            normalized["total_tokens"] = normalized["input_tokens"] + normalized["output_tokens"]
+        object.__setattr__(self, "usage", normalized)
 
 
 class LLMClient(Protocol):
@@ -64,5 +78,24 @@ class FakeLLMClient:
         self.requests.append(request)
         value = self._responses.get(request.prompt, self._default_response)
         return self._response(value, request)
+
+    generate = complete
+
+
+class ScriptedFakeLLMClient:
+    """Offline client that consumes a deterministic response/exception script."""
+
+    def __init__(self, script: list[str | LLMResponse | BaseException]) -> None:
+        self._script = list(script)
+        self.requests: list[LLMRequest] = []
+
+    def complete(self, request: LLMRequest) -> LLMResponse:
+        self.requests.append(request)
+        if not self._script:
+            raise RuntimeError("scripted fake response sequence exhausted")
+        value = self._script.pop(0)
+        if isinstance(value, BaseException):
+            raise value
+        return FakeLLMClient._response(value, request)
 
     generate = complete

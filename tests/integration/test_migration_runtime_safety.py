@@ -184,7 +184,7 @@ def test_populated_legacy_database_upgrades_through_repository_path(tmp_path) ->
     engine.dispose()
 
     with SQLiteRepository(db_path, tmp_path / "snapshots") as repository:
-        assert _revision(repository.engine) == "0003_phase1_refinery_domain"
+        assert _revision(repository.engine) == "0004_phase1_llm_audit"
         assert repository.get_knowledge_atom("old-atom") is not None
         provenance = repository.get_processing_provenance("old-atom")
         assert all(step.stage_run.id == "old-stage" for step in provenance.steps)
@@ -217,7 +217,7 @@ def test_populated_legacy_database_upgrades_through_standalone_alembic_path(tmp_
     command.upgrade(_migration_config(db_path), "head")
     check_engine = sa.create_engine(f"sqlite+pysqlite:///{db_path.as_posix()}")
     try:
-        assert _revision(check_engine) == "0003_phase1_refinery_domain"
+        assert _revision(check_engine) == "0004_phase1_llm_audit"
         with check_engine.connect() as connection:
             assert connection.exec_driver_sql("PRAGMA foreign_key_check").all() == []
     finally:

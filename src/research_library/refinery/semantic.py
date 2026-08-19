@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
-from research_library.domain import EvidenceLinkType, SourceDependencyRelation
+from research_library.domain import Claim, Evidence, EvidenceLinkType, SourceDependencyRelation
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,11 +72,40 @@ class SemanticRequest:
             raise ValueError("snapshot_ids must contain at least one non-empty ID")
 
 
+@dataclass(frozen=True, slots=True)
+class SemanticStageContext:
+    pipeline_run_id: str
+    stage_run_id: str
+    reference_time: datetime
+    repository: Any
+
+
 @runtime_checkable
 class SemanticBackend(Protocol):
-    """Replaceable semantic seam; implementations return candidates, not rows."""
+    """Provider-neutral semantic marker kept open for legacy offline backends."""
 
-    def collect(self, request: SemanticRequest, repository: Any) -> SemanticBatch: ...
+
+class StageAwareSemanticBackend(SemanticBackend, Protocol):
+    """Phase 1C stage-aware contract; candidates are never deterministic truth."""
+
+    def extract_evidence(
+        self, context: SemanticStageContext, snapshot_ids: tuple[str, ...]
+    ) -> tuple[EvidenceCandidate, ...]: ...
+
+    def extract_claims(
+        self, context: SemanticStageContext, evidences: tuple[Evidence, ...]
+    ) -> tuple[ClaimCandidate, ...]: ...
+
+    def classify_evidence_relations(
+        self,
+        context: SemanticStageContext,
+        evidences: tuple[Evidence, ...],
+        claims: tuple[Claim, ...],
+    ) -> tuple[EvidenceRelationCandidate, ...]: ...
+
+    def detect_dependencies(
+        self, context: SemanticStageContext, source_ids: tuple[str, ...]
+    ) -> tuple[DependencySignal, ...]: ...
 
 
 __all__ = [
@@ -87,4 +116,6 @@ __all__ = [
     "SemanticBackend",
     "SemanticBatch",
     "SemanticRequest",
+    "SemanticStageContext",
+    "StageAwareSemanticBackend",
 ]

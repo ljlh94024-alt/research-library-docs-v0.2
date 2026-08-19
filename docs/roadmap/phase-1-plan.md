@@ -32,9 +32,14 @@ change, real LLM, network/API call, embedding, or vector database is allowed.
 
 ## 1C — Structured LLM Boundary
 
-Add structured request/response contracts and fake-provider fixtures only after
-the deterministic pipeline is stable. Real provider calls remain outside the
-offline test suite.
+Phase 1C adds the stage-aware `SemanticBackend` v2 seam, strict Pydantic
+schemas, source-controlled Prompt Registry, static ModelRouter, offline fake
+client registry, StructuredLLMRuntime, content-addressed request/response
+traces, and immutable `LLMCallRecord` audit persistence in migration `0004`.
+Calls are owned only by `evidence_extract`, `claim_extract`, `evidence_link`,
+and optional `independence`. Deterministic Resolution, Confidence, and Atom
+publication remain unchanged. Real providers, credentials, network/API,
+embedding/vector DB, and Phase 1D features remain out of scope.
 
 ## 1D — Optional Real Provider
 

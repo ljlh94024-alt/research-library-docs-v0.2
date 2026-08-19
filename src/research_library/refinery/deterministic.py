@@ -43,7 +43,7 @@ from research_library.domain import (
 from research_library.storage.repository import Repository
 
 from .manifests import StageManifest, StageManifestStore, stable_artifact_id
-from .semantic import SemanticBackend, SemanticRequest
+from .semantic import SemanticBackend, SemanticBatch, SemanticRequest, SemanticStageContext
 
 DETERMINISTIC_PIPELINE_VERSION = "phase1b-deterministic-v2"
 CANONICAL_STAGE_NAMES = (
@@ -416,8 +416,8 @@ class DeterministicRefinery:
         manifest_store: StageManifestStore | None = None,
         manifest_root: str | Path | None = None,
     ) -> None:
-        if not pipeline_version.startswith("phase1b"):
-            raise ValueError("Phase 1B pipeline version must start with phase1b")
+        if not (pipeline_version.startswith("phase1b") or pipeline_version.startswith("phase1c")):
+            raise ValueError("pipeline version must start with phase1b or phase1c")
         self.repository = repository
         if backend is None:
             from .backend import FixtureSemanticBackend
@@ -482,10 +482,8 @@ class DeterministicRefinery:
         if len(snapshots) != len(snapshot_ids):
             raise ValueError("all snapshot_ids must already exist in the repository")
         request = SemanticRequest(snapshot_ids, reference_time)
-        batch = self.backend.collect(request, self.repository)
-        now = (
-            batch.reference_time or reference_time or max(item.retrieved_at for item in snapshots)
-        ).astimezone(UTC)
+        batch = SemanticBatch((), (), (), (), reference_time)
+        now = (reference_time or max(item.retrieved_at for item in snapshots)).astimezone(UTC)
         pipeline_id = (
             stable_artifact_id("pipeline-run", *snapshot_ids, self.pipeline_version, recovery_key)
             if recovery_key is not None
@@ -531,6 +529,15 @@ class DeterministicRefinery:
         atoms: list[KnowledgeAtom] = []
         outcomes: dict[str, ResolutionOutcome] = {}
 
+        def stage_context(stage_id: str) -> SemanticStageContext:
+            return SemanticStageContext(pipeline_id, stage_id, now, self.repository)
+
+        def legacy_batch() -> SemanticBatch:
+            nonlocal batch
+            if not batch.evidence and hasattr(self.backend, "collect"):
+                batch = self.backend.collect(request, self.repository)
+            return batch
+
         def source_for_evidence(evidence_id: str) -> str:
             evidence = self.repository.get_evidence(evidence_id)
             if evidence is None:
@@ -564,8 +571,12 @@ class DeterministicRefinery:
                 stage_name=stage_name,
                 stage_version=self.pipeline_version,
                 status=StageRunStatus.STARTED,
-                model="deterministic-semantic-backend",
-                provider="offline",
+                model=(
+                    "structured-semantic-backend"
+                    if self.pipeline_version.startswith("phase1c")
+                    else "deterministic-semantic-backend"
+                ),
+                provider="fake" if self.pipeline_version.startswith("phase1c") else "offline",
                 input_ref=input_manifest.ref,
                 started_at=now,
             )
@@ -626,6 +637,14 @@ class DeterministicRefinery:
                 raise
 
         def evidence_extract(stage_id: str) -> tuple[str, ...]:
+            nonlocal batch
+            if hasattr(self.backend, "extract_evidence"):
+                batch = replace(
+                    batch,
+                    evidence=self.backend.extract_evidence(stage_context(stage_id), snapshot_ids),
+                )
+            else:
+                batch = legacy_batch()
             for candidate in batch.evidence:
                 evidence = Evidence(
                     id=stable_artifact_id("evidence", stage_id, candidate.candidate_id),
@@ -634,6 +653,7 @@ class DeterministicRefinery:
                     locator=candidate.locator,
                     context=candidate.context,
                     extraction_method=candidate.extraction_method,
+                    metadata={"semantic_candidate_id": candidate.candidate_id},
                     created_at=now,
                     created_by_stage_run_id=stage_id,
                 )
@@ -642,6 +662,13 @@ class DeterministicRefinery:
             return tuple(item.id for item in evidence_by_candidate.values())
 
         def claim_extract(stage_id: str) -> tuple[str, ...]:
+            nonlocal batch
+            if hasattr(self.backend, "extract_claims"):
+                batch = replace(batch, claims=self.backend.extract_claims(
+                    stage_context(stage_id), tuple(evidence_by_candidate.values())
+                ))
+            else:
+                batch = legacy_batch()
             for candidate in batch.claims:
                 claim = Claim(
                     id=stable_artifact_id("claim", stage_id, candidate.candidate_id),
@@ -694,6 +721,15 @@ class DeterministicRefinery:
             )
 
         def evidence_link(stage_id: str) -> tuple[str, ...]:
+            nonlocal batch
+            if hasattr(self.backend, "classify_evidence_relations"):
+                batch = replace(batch, relations=self.backend.classify_evidence_relations(
+                    stage_context(stage_id),
+                    tuple(evidence_by_candidate.values()),
+                    tuple(claim_by_candidate.values()),
+                ))
+            else:
+                batch = legacy_batch()
             claim_by_candidate_id = {
                 candidate.candidate_id: claim
                 for candidate in batch.claims
@@ -722,6 +758,17 @@ class DeterministicRefinery:
             return tuple(item.id for item in links)
 
         def independence(stage_id: str) -> tuple[str, ...]:
+            nonlocal batch
+            if hasattr(self.backend, "detect_dependencies"):
+                source_ids = tuple(sorted({item.source_id for item in snapshots}))
+                batch = replace(
+                    batch,
+                    dependencies=self.backend.detect_dependencies(
+                        stage_context(stage_id), source_ids
+                    ),
+                )
+            else:
+                batch = legacy_batch()
             for signal in batch.dependencies:
                 dependency = SourceDependency(
                     id=stable_artifact_id(

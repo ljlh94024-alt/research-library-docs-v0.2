@@ -25,6 +25,7 @@ from research_library.domain import (
     SourceSnapshot,
     StageRun,
 )
+from research_library.llm.records import LLMCallRecord
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +69,7 @@ class ProcessingStep:
     entity_id: str
     stage_run: StageRun
     pipeline_run: PipelineRun
+    llm_calls: tuple[LLMCallRecord, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,3 +226,13 @@ class Repository(Protocol):
     def list_pipeline_runs(self) -> tuple[PipelineRun, ...]: ...
 
     def list_stage_runs(self, pipeline_run_id: str | None = None) -> tuple[StageRun, ...]: ...
+
+    def save_llm_call(self, record: LLMCallRecord) -> LLMCallRecord: ...
+
+    def get_llm_call(self, call_id: str) -> LLMCallRecord | None: ...
+
+    def list_llm_calls(
+        self,
+        stage_run_id: str | None = None,
+        logical_request_id: str | None = None,
+    ) -> tuple[LLMCallRecord, ...]: ...

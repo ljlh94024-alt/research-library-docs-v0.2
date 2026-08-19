@@ -12,6 +12,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Index,
+    Integer,
     MetaData,
     String,
     Table,
@@ -65,6 +66,53 @@ stage_runs = Table(
     Column("finished_at", String(64)),
     Column("error_type", String(64)),
     Column("error", Text),
+)
+
+llm_calls = Table(
+    "llm_calls",
+    metadata,
+    Column("id", String(128), primary_key=True),
+    Column("logical_request_id", String(128), nullable=False),
+    Column("stage_run_id", String(128), ForeignKey("stage_runs.id"), nullable=False),
+    Column("task_type", String(128), nullable=False),
+    Column("provider", String(128), nullable=False),
+    Column("model", String(256), nullable=False),
+    Column("model_role", String(64), nullable=False),
+    Column("prompt_id", String(128), nullable=False),
+    Column("prompt_version", String(64), nullable=False),
+    Column("schema_id", String(128), nullable=False),
+    Column("schema_version", String(64), nullable=False),
+    Column("attempt", Integer, nullable=False),
+    Column("status", String(32), nullable=False),
+    Column("request_id", String(256)),
+    Column("request_hash", String(64), nullable=False),
+    Column("response_hash", String(64)),
+    Column("request_ref", Text, nullable=False),
+    Column("response_ref", Text),
+    Column("input_tokens", Integer),
+    Column("output_tokens", Integer),
+    Column("total_tokens", Integer),
+    Column("latency_ms", Float, nullable=False),
+    Column("started_at", String(64), nullable=False),
+    Column("finished_at", String(64), nullable=False),
+    Column("error_type", String(128)),
+    Column("error", Text),
+    Column("metadata", JSON, nullable=False),
+    UniqueConstraint("logical_request_id", "attempt", name="uq_llm_calls_logical_request_attempt"),
+    CheckConstraint("attempt >= 1", name="ck_llm_calls_attempt_positive"),
+    CheckConstraint("latency_ms >= 0.0", name="ck_llm_calls_latency_nonnegative"),
+    CheckConstraint(
+        "input_tokens IS NULL OR input_tokens >= 0",
+        name="ck_llm_calls_input_tokens_nonnegative",
+    ),
+    CheckConstraint(
+        "output_tokens IS NULL OR output_tokens >= 0",
+        name="ck_llm_calls_output_tokens_nonnegative",
+    ),
+    CheckConstraint(
+        "total_tokens IS NULL OR total_tokens >= 0",
+        name="ck_llm_calls_total_tokens_nonnegative",
+    ),
 )
 
 source_snapshots = Table(
@@ -366,6 +414,10 @@ Index("ix_evidence_snapshot_id", evidence.c.snapshot_id)
 Index("ix_evidence_links_claim_id", evidence_links.c.claim_id)
 Index("ix_evidence_links_evidence_id", evidence_links.c.evidence_id)
 Index("ix_stage_runs_pipeline_run_id", stage_runs.c.pipeline_run_id)
+Index("ix_llm_calls_stage_run_id", llm_calls.c.stage_run_id)
+Index("ix_llm_calls_logical_request_id", llm_calls.c.logical_request_id)
+Index("ix_llm_calls_prompt", llm_calls.c.prompt_id, llm_calls.c.prompt_version)
+Index("ix_llm_calls_provider_model", llm_calls.c.provider, llm_calls.c.model)
 Index("ix_claims_statement", claims.c.statement)
 Index("ix_source_snapshots_created_by_stage_run_id", source_snapshots.c.created_by_stage_run_id)
 Index("ix_evidence_created_by_stage_run_id", evidence.c.created_by_stage_run_id)
