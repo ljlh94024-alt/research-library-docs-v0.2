@@ -4,5 +4,8 @@ __pycache__/
 .ruff_cache/
 *.egg-info/
 .env
+.env.local
+credentials
+credentials.*
 data/research_library.db
 

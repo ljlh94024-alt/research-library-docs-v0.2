@@ -12,6 +12,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from .client import LLMRequest, LLMResponse
+from .errors import LLMProviderError, safe_metadata
 from .prompts import PromptRegistry, default_prompt_registry
 from .records import LLMCallRecord, LLMCallStatus
 from .routing import LLMClientRegistry, ModelRouter, StaticModelRouter
@@ -24,6 +25,14 @@ class StructuredOutputError(RuntimeError):
 
 class LLMRetryExhaustedError(StructuredOutputError):
     pass
+
+
+def is_retryable_llm_error(exc: BaseException) -> bool:
+    """Provider errors declare retryability; semantic failures keep old retry behavior."""
+
+    if isinstance(exc, LLMProviderError):
+        return exc.retryable
+    return True
 
 
 class StrictModel(BaseModel):
@@ -269,8 +278,15 @@ class StructuredLLMRuntime:
                         spec,
                         LLMCallStatus.FAILED,
                         exc,
+                        metadata=(
+                            exc.audit_metadata
+                            if isinstance(exc, LLMProviderError)
+                            else None
+                        ),
                     )
                 )
+                if not is_retryable_llm_error(exc):
+                    raise
         raise LLMRetryExhaustedError(
             f"structured request exhausted after {self.max_attempts} attempts: {last_error}"
         ) from last_error
@@ -320,6 +336,7 @@ class StructuredLLMRuntime:
         spec: Any,
         status: LLMCallStatus,
         error: Exception | None,
+        metadata: Mapping[str, Any] | None = None,
     ) -> LLMCallRecord:
         usage = response.usage if response is not None else {}
         error_type = type(error).__name__ if error else None
@@ -351,7 +368,11 @@ class StructuredLLMRuntime:
             finished_at=finished,
             error_type=error_type,
             error=error_text,
-            metadata={"monotonic_elapsed_ms": max(0.0, (time.perf_counter() - monotonic) * 1000.0)},
+            metadata=safe_metadata(
+                metadata,
+                **(response.raw if response is not None else {}),
+                monotonic_elapsed_ms=max(0.0, (time.perf_counter() - monotonic) * 1000.0),
+            ),
         )
 
 
@@ -366,4 +387,5 @@ __all__ = [
     "StructuredLLMRuntime",
     "StructuredOutputError",
     "StrictModel",
+    "is_retryable_llm_error",
 ]
