@@ -37,6 +37,7 @@
 - `docs/decisions/ADR-0016-phase0-persistence-hardening.md` — **持久化完整性与版本演进规则。**
 - `docs/decisions/ADR-0017-phase1-refinery-domain.md` — **Phase 1A Refinery Domain、决策、置信度与发布状态。**
 - `docs/decisions/ADR-0019-phase1c-structured-llm.md` — **Phase 1C 结构化 LLM 边界、审计与非目标。**
+- `docs/decisions/ADR-0020-phase1d-openai-compatible-provider.md` — **Phase 1D OpenAI-compatible provider boundary。**
 
 ## Versions
 
@@ -58,7 +59,9 @@
 
 - `docs/architecture/phase-1-refinery-contracts.md` — **Phase 1A 九阶段 typed contracts 与 ownership。**
 - `docs/architecture/phase-1c-llm-boundary.md` — **Phase 1C stage-aware semantic seam、trace 与审计流。**
+- `docs/architecture/phase-1d-provider-boundary.md` — **Phase 1D provider boundary。**
 
 ## Operations
 
 - `docs/operations/local-development.md`
+- `docs/operations/openai-compatible-provider.md` — **Phase 1D provider configuration and offline/live smoke。**

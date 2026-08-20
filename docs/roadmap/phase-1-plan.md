@@ -43,6 +43,6 @@ embedding/vector DB, and Phase 1D features remain out of scope.
 
 ## 1D — Optional Real Provider
 
-Only an explicit later decision may introduce a real provider. Credentials,
-network behavior, retry policy, and usage telemetry must remain outside the
-domain model.
+Phase 1D introduces an optional OpenAI-compatible provider adapter. Credentials,
+network behavior, retry policy, and usage telemetry remain outside the domain
+model; CI remains fully offline and the deterministic tail remains unchanged.

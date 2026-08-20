@@ -42,11 +42,6 @@ class LLMResponse:
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ValueError(f"{key} must be a non-negative integer")
             normalized[key] = value
-        if (
-            "total_tokens" not in normalized
-            and {"input_tokens", "output_tokens"} <= normalized.keys()
-        ):
-            normalized["total_tokens"] = normalized["input_tokens"] + normalized["output_tokens"]
         object.__setattr__(self, "usage", normalized)
 
 

@@ -34,6 +34,8 @@ class StaticModelRouter:
         "evidence_extract": ModelTarget(ModelRole.EXTRACTOR, "fake", "fake-extractor"),
         "claim_extract": ModelTarget(ModelRole.EXTRACTOR, "fake", "fake-extractor"),
         "evidence_link": ModelTarget(ModelRole.FAST, "fake", "fake-fast"),
+        "independence": ModelTarget(ModelRole.FAST, "fake", "fake-fast"),
+        # Backward-compatible alias for Phase 1C callers; new semantic calls use independence.
         "source_dependency": ModelTarget(ModelRole.FAST, "fake", "fake-fast"),
     }
 

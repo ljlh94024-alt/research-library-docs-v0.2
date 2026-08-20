@@ -111,6 +111,14 @@ def default_prompt_registry() -> PromptRegistry:
                     "Sources: {sources}",
                     ("sources", "schema_id", "schema_version"),
                 ),
+                (
+                    "semantic.independence",
+                    "independence",
+                    "fast",
+                    "semantic.source-dependency",
+                    "Sources: {sources}",
+                    ("sources", "schema_id", "schema_version"),
+                ),
             )
         )
     )

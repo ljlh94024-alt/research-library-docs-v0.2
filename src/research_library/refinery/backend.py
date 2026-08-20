@@ -346,8 +346,8 @@ class StructuredLLMSemanticBackend:
     ) -> tuple[DependencySignal, ...]:
         sources = [context.repository.get_source(item) for item in source_ids]
         output = self.runtime.invoke(
-            stage_run_id=context.stage_run_id, task_type="source_dependency",
-            prompt_id="semantic.source_dependency", prompt_version="v1",
+            stage_run_id=context.stage_run_id, task_type="independence",
+            prompt_id="semantic.independence", prompt_version="v1",
             schema=SourceDependencyOutput,
             variables={
                 "sources": [item.canonical_uri for item in sources if item is not None],

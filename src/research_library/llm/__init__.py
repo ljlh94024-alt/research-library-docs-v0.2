@@ -1,7 +1,26 @@
 """Internal LLM boundary and deterministic Phase 0 fake."""
 
 from .client import FakeLLMClient, LLMClient, LLMRequest, LLMResponse, ScriptedFakeLLMClient
+from .errors import (
+    LLMProviderError,
+    ProviderAuthenticationError,
+    ProviderConfigurationError,
+    ProviderConnectionError,
+    ProviderContentFilterError,
+    ProviderHTTPError,
+    ProviderPermissionError,
+    ProviderProtocolError,
+    ProviderRateLimitError,
+    ProviderRedirectError,
+    ProviderRequestTooLargeError,
+    ProviderResponseTooLargeError,
+    ProviderTimeoutError,
+    ProviderTruncatedResponseError,
+    redact_secrets,
+)
+from .openai_compatible import OpenAICompatibleClient
 from .prompts import PromptRegistry, PromptSpec, default_prompt_registry
+from .provider_config import OpenAICompatibleConfig
 from .records import LLMCallAggregation, LLMCallRecord, LLMCallStatus, aggregate_llm_calls
 from .routing import LLMClientRegistry, ModelRole, ModelRouter, ModelTarget, StaticModelRouter
 from .structured import (
@@ -12,14 +31,26 @@ from .structured import (
     SourceDependencyOutput,
     StructuredLLMRuntime,
     StructuredOutputError,
+    is_retryable_llm_error,
 )
 from .trace_store import LLMTraceIntegrityError, LLMTraceStore, TraceRef
+from .transport import (
+    HTTPRequest,
+    HTTPResponse,
+    HTTPTransport,
+    ScriptedHTTPTransport,
+    UrllibHTTPTransport,
+)
 
 __all__ = [
     "ClaimExtractionOutput",
     "EvidenceExtractionOutput",
     "EvidenceRelationOutput",
     "FakeLLMClient",
+    "HTTPTransport",
+    "HTTPRequest",
+    "HTTPResponse",
+    "LLMProviderError",
     "LLMCallRecord",
     "LLMCallAggregation",
     "LLMCallStatus",
@@ -30,17 +61,36 @@ __all__ = [
     "LLMRetryExhaustedError",
     "LLMTraceIntegrityError",
     "LLMTraceStore",
+    "OpenAICompatibleClient",
+    "OpenAICompatibleConfig",
     "ModelRole",
     "ModelRouter",
     "ModelTarget",
     "PromptRegistry",
     "PromptSpec",
     "ScriptedFakeLLMClient",
+    "ScriptedHTTPTransport",
     "SourceDependencyOutput",
     "StaticModelRouter",
     "StructuredLLMRuntime",
     "StructuredOutputError",
     "TraceRef",
+    "UrllibHTTPTransport",
     "aggregate_llm_calls",
     "default_prompt_registry",
+    "is_retryable_llm_error",
+    "ProviderAuthenticationError",
+    "ProviderConfigurationError",
+    "ProviderConnectionError",
+    "ProviderContentFilterError",
+    "ProviderHTTPError",
+    "ProviderPermissionError",
+    "ProviderProtocolError",
+    "ProviderRateLimitError",
+    "ProviderRedirectError",
+    "ProviderRequestTooLargeError",
+    "ProviderResponseTooLargeError",
+    "ProviderTimeoutError",
+    "ProviderTruncatedResponseError",
+    "redact_secrets",
 ]
