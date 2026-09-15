@@ -1,0 +1,8 @@
+{
+  "sample": 5,
+  "kind": "json",
+  "task_id": "TG-GITHUB-CODE-RELAY-EXPERIMENT-20260915-R01",
+  "operations": ["fetch", "checkout", "read", "return"],
+  "production_changes": false,
+  "secrets": null
+}
