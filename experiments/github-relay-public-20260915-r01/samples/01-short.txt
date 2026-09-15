@@ -1,0 +1,4 @@
+TG-GITHUB-CODE-RELAY-EXPERIMENT-20260915-R01
+sample=01
+kind=short-text
+expected=unchanged
