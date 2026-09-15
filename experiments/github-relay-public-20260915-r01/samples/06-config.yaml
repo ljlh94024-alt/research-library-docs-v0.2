@@ -1,0 +1,9 @@
+sample: 6
+kind: yaml
+task_id: TG-GITHUB-CODE-RELAY-EXPERIMENT-20260915-R01
+route:
+  - web-native-github
+  - server-git-fetch
+  - isolated-validation
+safe: true
+production_changes: false
